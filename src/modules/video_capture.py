@@ -93,7 +93,19 @@ class VideoCaptureObject:
         return
     
     def addFpsOverlay(self, frame):
-        return
+        #create text with fps data
+        fpsText = f"FPS: {self.fps:.1f}"
+
+        #draw text on frame
+        #parameters are: image, text, position, font, scale, color, thickness
+        cv2.putText(frame,
+                    fpsText,
+                    (10,30), #position x,y from top-left
+                    cv2.FONT_HERSHEY_COMPLEX,
+                    1.0, #font scale
+                    (0,255,0), #color
+                    2) # thickness
+        return frame
     
     def display(self, windowName = "Spoken Wardrobe - Mirror"):
         cv2.namedWindow(windowName, cv2.WINDOW_NORMAL)
@@ -113,11 +125,17 @@ class VideoCaptureObject:
                 continue
 
             #create mirrored effect
+            # Flip the frame horizontally (mirror effect)
+            # flipCode = 0 for vertical flip
+            # flipCode = 1 for horizontal flip
+            # flipCode = -1 for both horizontal and vertical flip
+            frameM = cv2.flip(frame, 1)
 
             #add fps overlay
+            frameMF = self.addFpsOverlay(frameM)
 
             #show frame in the window
-            cv2.imshow(windowName, frame) #for now is just frame because we have not mirrored or added text over it
+            cv2.imshow(windowName, frameMF) #for now is just frame because we have not mirrored or added text over it
 
             #wait one millisecond (needed for display to update)
             #read key press
@@ -144,17 +162,6 @@ class VideoCaptureObject:
 
         self.stop()
 
-
-        # while True:
-        #     # gray = cv2.cvtColor(self.readFrame, cv2.COLOR_BGR2GRAY)
-        #     # Display the resulting frame
-        #     ret, frame = self.readFrame()
-        #     cv2.imshow('frame', frame)
-        #     if cv2.waitKey(1) == ord('q'):
-        #         self.capture.release()
-        #         break
-
-        # return 
 
     def stop(self):
         # self.isRunning
