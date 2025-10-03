@@ -1,0 +1,502 @@
+"""
+PHASE 3: BODY TRACKING WITH MEDIAPIPE
+======================================
+
+PURPOSE: Detect and track the user's body in the video feed so we know
+where to overlay the AI-generated clothing.
+
+LEARNING RESOURCES:
+- MediaPipe Pose: https://google.github.io/mediapipe/solutions/pose.html
+- MediaPipe Python API: https://google.github.io/mediapipe/solutions/pose#python-solution-api
+- Pose Landmarks: https://google.github.io/mediapipe/solutions/pose#pose-landmark-model
+
+WHAT YOU'RE BUILDING:
+A system that processes each video frame and identifies:
+- Where the person is in the frame (segmentation mask)
+- Key body points (shoulders, hips, torso) for positioning clothing
+- A bounding box where clothing should appear
+"""
+
+import cv2
+import mediapipe as mp
+import numpy as np
+import time
+
+
+class BodyTracker:
+    """
+    This class handles body detection and tracking using MediaPipe.
+    
+    MEDIAPIPE PROVIDES TWO KEY THINGS:
+    1. Pose landmarks - 33 points on the body (shoulders, hips, etc.)
+    2. Segmentation mask - pixel-perfect outline of where person is
+    
+    We'll use both to perfectly position AI-generated clothing.
+    """
+    
+    def __init__(self, min_detection_confidence=0.5, min_tracking_confidence=0.5):
+        """
+        Initialize the body tracking system.
+        
+        PARAMETERS:
+        - min_detection_confidence: How sure MediaPipe must be to detect a person (0-1)
+                                   Lower = more sensitive but more false positives
+        - min_tracking_confidence: How sure to keep tracking (0-1)
+                                  Lower = more stable but may track wrong person
+        
+        Start with 0.5 for both and adjust if needed.
+        """
+        
+        self.min_detection_confidence = min_detection_confidence
+        self.min_tracking_confidence = min_tracking_confidence
+        
+        # Initialize MediaPipe Pose
+        # mp.solutions.pose is the MediaPipe pose detection module
+        self.mp_pose = mp.solutions.pose
+        self.mp_drawing = mp.solutions.drawing_utils  # For visualization
+        self.mp_drawing_styles = mp.solutions.drawing_styles
+        
+        # Create the pose detector
+        # model_complexity: 0=lite, 1=full, 2=heavy
+        # For real-time mirror, 1 is good balance
+        self.pose = self.mp_pose.Pose(
+            static_image_mode=False,  # False = video mode (optimized for tracking)
+            model_complexity=1,  # 0, 1, or 2 (higher = more accurate but slower)
+            smooth_landmarks=True,  # Smooth out jittery movement
+            enable_segmentation=True,  # IMPORTANT: We need this for the mask
+            min_detection_confidence=min_detection_confidence,
+            min_tracking_confidence=min_tracking_confidence
+        )
+        
+        # Store latest detection results
+        self.latest_landmarks = None
+        self.latest_segmentation_mask = None
+        self.latest_bounding_box = None
+        
+        # Performance tracking
+        self.processing_time = 0
+        
+        print("BodyTracker initialized")
+        print(f"Model complexity: 1 (balanced)")
+        print(f"Detection confidence: {min_detection_confidence}")
+        print(f"Tracking confidence: {min_tracking_confidence}")
+    
+    
+    def process_frame(self, frame):
+        """
+        Process a video frame to detect body landmarks and segmentation.
+        
+        PARAMETERS:
+        - frame: Input image (BGR format from OpenCV)
+        
+        RETURNS:
+        - results: MediaPipe results object containing landmarks and mask
+        - processed_frame: Frame with landmarks drawn (for visualization)
+        """
+        
+        start_time = time.time()
+        
+        # MediaPipe expects RGB, but OpenCV uses BGR
+        # We need to convert color space
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Process the frame with MediaPipe
+        # This is where the AI magic happens
+        results = self.pose.process(frame_rgb)
+        
+        # Calculate processing time
+        self.processing_time = (time.time() - start_time) * 1000  # Convert to ms
+        
+        # Create a copy for drawing visualization
+        processed_frame = frame.copy()
+        
+        # Check if a person was detected
+        if results.pose_landmarks:
+            # YES! We found a person
+            self.latest_landmarks = results.pose_landmarks
+            
+            # Extract segmentation mask if available
+            if results.segmentation_mask is not None:
+                self.latest_segmentation_mask = results.segmentation_mask
+            
+            # Calculate bounding box for torso area
+            self.latest_bounding_box = self._calculate_torso_bounding_box(
+                results.pose_landmarks,
+                frame.shape
+            )
+            
+            # Draw landmarks on the frame for visualization
+            self.mp_drawing.draw_landmarks(
+                processed_frame,
+                results.pose_landmarks,
+                self.mp_pose.POSE_CONNECTIONS,
+                landmark_drawing_spec=self.mp_drawing_styles.get_default_pose_landmarks_style()
+            )
+            
+            # Draw bounding box if we have one
+            if self.latest_bounding_box is not None:
+                x, y, w, h = self.latest_bounding_box
+                cv2.rectangle(processed_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                cv2.putText(processed_frame, "Clothing Area", (x, y-10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        else:
+            # No person detected
+            self.latest_landmarks = None
+            self.latest_segmentation_mask = None
+            self.latest_bounding_box = None
+            
+            # Add message to frame
+            cv2.putText(processed_frame, "No person detected", (10, 60),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        
+        # Add processing time to frame
+        cv2.putText(processed_frame, f"Body tracking: {self.processing_time:.1f}ms",
+                   (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                   0.5, (255, 255, 255), 1)
+        
+        return results, processed_frame
+    
+    
+    def _calculate_torso_bounding_box(self, pose_landmarks, frame_shape):
+        """
+        Calculate a bounding box around the torso where clothing will go.
+        
+        LANDMARK INDICES WE CARE ABOUT:
+        - 11, 12: Left and right shoulders
+        - 23, 24: Left and right hips
+        These define the torso area
+        
+        PARAMETERS:
+        - pose_landmarks: MediaPipe pose landmarks
+        - frame_shape: Shape of the frame (height, width, channels)
+        
+        RETURNS:
+        - (x, y, width, height): Bounding box coordinates
+        """
+        
+        height, width = frame_shape[:2]
+        
+        # Get landmark coordinates
+        # MediaPipe gives normalized coordinates (0-1), we need pixels
+        landmarks = pose_landmarks.landmark
+        
+        # Shoulder landmarks
+        left_shoulder = landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER]
+        right_shoulder = landmarks[self.mp_pose.PoseLandmark.RIGHT_SHOULDER]
+        
+        # Hip landmarks
+        left_hip = landmarks[self.mp_pose.PoseLandmark.LEFT_HIP]
+        right_hip = landmarks[self.mp_pose.PoseLandmark.RIGHT_HIP]
+        
+        # Convert normalized coordinates to pixels
+        # MediaPipe coordinates: x=horizontal, y=vertical, both 0-1
+        points = [
+            (left_shoulder.x * width, left_shoulder.y * height),
+            (right_shoulder.x * width, right_shoulder.y * height),
+            (left_hip.x * width, left_hip.y * height),
+            (right_hip.x * width, right_hip.y * height)
+        ]
+        
+        # Find bounding box that contains all these points
+        x_coords = [p[0] for p in points]
+        y_coords = [p[1] for p in points]
+        
+        min_x = int(min(x_coords))
+        max_x = int(max(x_coords))
+        min_y = int(min(y_coords))
+        max_y = int(max(y_coords))
+        
+        # Add some padding (20% on each side)
+        # This ensures clothing extends beyond exact body outline
+        width_padding = int((max_x - min_x) * 0.2)
+        height_padding = int((max_y - min_y) * 0.2)
+        
+        x = max(0, min_x - width_padding)
+        y = max(0, min_y - height_padding)
+        w = min(width - x, max_x - min_x + 2 * width_padding)
+        h = min(height - y, max_y - min_y + 2 * height_padding)
+        
+        return (x, y, w, h)
+    
+    
+    def get_segmentation_mask(self, frame_shape, threshold=0.5):
+        """
+        Get a binary segmentation mask showing where the person is.
+        
+        The mask is a 2D array where:
+        - 1 (white) = person is present
+        - 0 (black) = background
+        
+        PARAMETERS:
+        - frame_shape: Shape to resize mask to
+        - threshold: Confidence threshold for mask (0-1)
+        
+        RETURNS:
+        - Binary mask as numpy array, or None if no person detected
+        """
+        
+        if self.latest_segmentation_mask is None:
+            return None
+        
+        # MediaPipe segmentation mask is a float array (0-1)
+        # Convert to binary (0 or 255) for easier use
+        mask = self.latest_segmentation_mask
+        binary_mask = (mask > threshold).astype(np.uint8) * 255
+        
+        # Resize to match frame dimensions
+        height, width = frame_shape[:2]
+        resized_mask = cv2.resize(binary_mask, (width, height))
+        
+        return resized_mask
+    
+    
+    def get_torso_region(self, frame):
+        """
+        Extract just the torso region from a frame.
+        
+        This creates a cropped image of the area where clothing will appear.
+        Useful for processing just the relevant part of the image.
+        
+        PARAMETERS:
+        - frame: Full video frame
+        
+        RETURNS:
+        - Cropped torso region, or None if no person detected
+        """
+        
+        if self.latest_bounding_box is None:
+            return None
+        
+        x, y, w, h = self.latest_bounding_box
+        
+        # Extract the region
+        torso_region = frame[y:y+h, x:x+w].copy()
+        
+        return torso_region
+    
+    
+    def visualize_segmentation(self, frame):
+        """
+        Create a visualization showing the segmentation mask overlay.
+        
+        This helps you see exactly what MediaPipe detected as "person".
+        Useful for debugging and understanding the mask.
+        
+        PARAMETERS:
+        - frame: Input frame
+        
+        RETURNS:
+        - Frame with colored segmentation overlay
+        """
+        
+        if self.latest_segmentation_mask is None:
+            return frame
+        
+        # Get the binary mask
+        mask = self.get_segmentation_mask(frame.shape)
+        
+        if mask is None:
+            return frame
+        
+        # Create a colored overlay (green)
+        overlay = frame.copy()
+        overlay[mask > 0] = overlay[mask > 0] * 0.5 + np.array([0, 255, 0]) * 0.5
+        
+        return overlay.astype(np.uint8)
+    
+    
+    def get_landmark_coordinates(self, landmark_name):
+        """
+        Get pixel coordinates for a specific body landmark.
+        
+        USEFUL LANDMARKS FOR CLOTHING:
+        - LEFT_SHOULDER, RIGHT_SHOULDER: Top of clothing
+        - LEFT_HIP, RIGHT_HIP: Bottom of clothing
+        - NOSE: For face detection (don't cover face)
+        
+        PARAMETERS:
+        - landmark_name: Name from mp.solutions.pose.PoseLandmark enum
+        
+        RETURNS:
+        - (x, y) coordinates in pixels, or None if not detected
+        """
+        
+        if self.latest_landmarks is None:
+            return None
+        
+        # This would be called like:
+        # coords = tracker.get_landmark_coordinates(mp.solutions.pose.PoseLandmark.LEFT_SHOULDER)
+        
+        # Get the landmark
+        landmark = self.latest_landmarks.landmark[landmark_name]
+        
+        # Return as tuple (note: we'd need frame dimensions to convert to pixels)
+        # For now, return normalized coordinates
+        return (landmark.x, landmark.y, landmark.z)
+    
+    
+    def is_person_detected(self):
+        """
+        Simple check: is there a person in the current frame?
+        
+        RETURNS:
+        - True if person detected, False otherwise
+        """
+        return self.latest_landmarks is not None
+    
+    
+    def cleanup(self):
+        """
+        Clean up MediaPipe resources.
+        """
+        if self.pose:
+            self.pose.close()
+            print("BodyTracker cleaned up")
+
+
+# ============================================================================
+# USAGE EXAMPLE - Integration with Phase 1 Video Capture
+# ============================================================================
+
+def main():
+    """
+    Test body tracking with live video feed.
+    This combines Phase 1 (video) with Phase 3 (body tracking).
+    """
+    
+    print("=" * 60)
+    print("PHASE 3: BODY TRACKING TEST")
+    print("=" * 60)
+    print("\nThis will show your webcam with body tracking overlay.")
+    print("Stand in view of the camera to see tracking in action.")
+    print("\nControls:")
+    print("- Q: Quit")
+    print("- S: Toggle segmentation visualization")
+    print("- L: Toggle landmark drawing")
+    print("=" * 60)
+    
+    # Initialize video capture (from Phase 1)
+    cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    
+    if not cap.isOpened():
+        print("Error: Could not open camera")
+        return
+    
+    # Initialize body tracker
+    tracker = BodyTracker(
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5
+    )
+    
+    # Display settings
+    show_segmentation = False
+    show_landmarks = True
+    
+    print("\nStarting body tracking...")
+    
+    try:
+        while True:
+            # Read frame
+            ret, frame = cap.read()
+            if not ret:
+                print("Failed to read frame")
+                break
+            
+            # Mirror the frame
+            frame = cv2.flip(frame, 1)
+            
+            # Process with body tracker
+            results, processed_frame = tracker.process_frame(frame)
+            
+            # Choose what to display
+            if show_segmentation:
+                display_frame = tracker.visualize_segmentation(frame)
+            elif show_landmarks:
+                display_frame = processed_frame
+            else:
+                display_frame = frame
+            
+            # Add info text
+            if tracker.is_person_detected():
+                status_text = "Person detected"
+                status_color = (0, 255, 0)
+                
+                # Show bounding box info
+                if tracker.latest_bounding_box:
+                    x, y, w, h = tracker.latest_bounding_box
+                    box_text = f"Torso: {w}x{h}px at ({x},{y})"
+                    cv2.putText(display_frame, box_text, (10, 90),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            else:
+                status_text = "No person detected"
+                status_color = (0, 0, 255)
+            
+            cv2.putText(display_frame, status_text, (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, status_color, 2)
+            
+            # Display
+            cv2.imshow("Body Tracking Test", display_frame)
+            
+            # Handle key presses
+            key = cv2.waitKey(1) & 0xFF
+            
+            if key == ord('q') or key == ord('Q'):
+                break
+            elif key == ord('s') or key == ord('S'):
+                show_segmentation = not show_segmentation
+                mode = "ON" if show_segmentation else "OFF"
+                print(f"Segmentation visualization: {mode}")
+            elif key == ord('l') or key == ord('L'):
+                show_landmarks = not show_landmarks
+                mode = "ON" if show_landmarks else "OFF"
+                print(f"Landmark drawing: {mode}")
+    
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+    
+    finally:
+        # Cleanup
+        print("\nCleaning up...")
+        tracker.cleanup()
+        cap.release()
+        cv2.destroyAllWindows()
+        print("Test complete!")
+
+
+if __name__ == "__main__":
+    main()
+
+
+# ============================================================================
+# TESTING CHECKLIST
+# ============================================================================
+#
+# [ ] MediaPipe installs without errors
+# [ ] Camera opens and shows mirrored view
+# [ ] Skeleton (landmarks) appears on your body
+# [ ] Green bounding box appears around torso
+# [ ] Tracking follows you as you move
+# [ ] Press S shows segmentation mask (green overlay)
+# [ ] Mask accurately follows body outline
+# [ ] Processing time stays under 50ms
+# [ ] Program exits cleanly with Q
+#
+# TROUBLESHOOTING:
+# - No skeleton appears: Move closer to camera, ensure good lighting
+# - Jittery tracking: Increase min_tracking_confidence to 0.7
+# - Slow performance: Reduce model_complexity to 0
+# - Mask not appearing: Check that enable_segmentation=True
+#
+# WHAT THIS GIVES US:
+# - Real-time knowledge of where person is in frame
+# - Exact coordinates for shoulders, hips (where clothing goes)
+# - Segmentation mask for natural blending of clothing
+# - Bounding box to crop clothing area
+#
+# NEXT STEPS:
+# Phase 4 will add AI generation of clothing based on speech.
+# Then Phase 5 will use this body tracking to position that clothing!
+# ============================================================================

@@ -1,0 +1,406 @@
+"""
+PHASE 1: VIDEO CAPTURE AND MIRROR DISPLAY
+==========================================
+
+PURPOSE: Create a smooth, mirrored video feed from webcam that runs at 30fps
+This is the foundation of everything - if video isn't smooth here, nothing else will work well.
+
+LEARNING RESOURCES:
+- OpenCV Documentation: https://docs.opencv.org/4.x/
+- Video Capture Tutorial: https://docs.opencv.org/4.x/dd/d43/tutorial_py_video_display.html
+- Threading in Python: https://docs.python.org/3/library/threading.html
+
+WHAT YOU'RE BUILDING:
+A simple window that shows your webcam feed flipped horizontally like a mirror.
+The video runs smoothly without lag or stuttering.
+"""
+
+import cv2  # OpenCV - the main library for video capture and image processing
+import time  # For calculating frame rate
+import threading  # Will be needed later for smooth performance
+import numpy as np  # For image array manipulation
+
+
+class VideoCapture:
+    """
+    This class handles everything related to capturing video from the webcam
+    and displaying it as a mirror.
+    
+    WHY A CLASS? Because we need to maintain state (like the video capture object,
+    current frame, running status) and organize related functions together.
+    """
+    
+    def __init__(self, camera_index=0, target_fps=30):
+        """
+        Initialize the video capture system.
+        
+        PARAMETERS:
+        - camera_index: Which camera to use (0 is usually the built-in webcam)
+        - target_fps: How many frames per second we want (30 is smooth for this project)
+        
+        WHAT HAPPENS HERE:
+        We set up the video capture object but don't start capturing yet.
+        Think of this as plugging in the camera but not turning it on yet.
+        """
+        
+        # Store the camera index we want to use
+        self.camera_index = camera_index
+        
+        # Store our target frame rate
+        self.target_fps = target_fps
+        
+        # This will hold our OpenCV video capture object
+        # We initialize it as None and create it when we start capturing
+        self.capture = None
+        
+        # This will store the most recent frame we captured
+        # Starting with None means "we don't have a frame yet"
+        self.current_frame = None
+        
+        # Boolean flag to control whether capture is running
+        # This lets us stop the capture cleanly later
+        self.is_running = False
+        
+        # Lock for thread-safe access to current_frame
+        # WHY? When we add threading later, multiple parts of code might try
+        # to read/write the frame at the same time. A lock prevents conflicts.
+        self.frame_lock = threading.Lock()
+        
+        # Variables for FPS calculation (to monitor performance)
+        self.fps = 0
+        self.frame_count = 0
+        self.fps_start_time = None
+        
+        print("VideoCapture initialized")
+        print(f"Camera index: {camera_index}")
+        print(f"Target FPS: {target_fps}")
+    
+    
+    def start(self):
+        """
+        Start capturing video from the webcam.
+        
+        WHAT HAPPENS:
+        1. Opens connection to the camera
+        2. Configures camera settings
+        3. Starts the capture loop
+        
+        ERRORS TO WATCH FOR:
+        - Camera not found (camera_index wrong)
+        - Camera in use by another application
+        - Permission denied (need to grant camera access to Terminal/Python)
+        """
+        
+        # Create the video capture object
+        # This actually opens the camera device
+        self.capture = cv2.VideoCapture(self.camera_index)
+        
+        # CHECK: Did the camera open successfully?
+        if not self.capture.isOpened():
+            raise Exception(f"Could not open camera {self.camera_index}. "
+                          "Check if camera is connected and not in use.")
+        
+        # OPTIONAL: Set camera properties for better quality/performance
+        # These are guidelines - the camera might not support all values
+        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)  # 1280x720 is good HD quality
+        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self.capture.set(cv2.CAP_PROP_FPS, self.target_fps)
+        
+        # Get actual camera properties (might differ from what we set)
+        actual_width = self.capture.get(cv2.CAP_PROP_FRAME_WIDTH)
+        actual_height = self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        actual_fps = self.capture.get(cv2.CAP_PROP_FPS)
+        
+        print(f"Camera opened successfully!")
+        print(f"Resolution: {int(actual_width)}x{int(actual_height)}")
+        print(f"Camera FPS setting: {actual_fps}")
+        
+        # Set the running flag to True
+        self.is_running = True
+        
+        # Initialize FPS timing
+        self.fps_start_time = time.time()
+        self.frame_count = 0
+        
+        return True
+    
+    
+    def read_frame(self):
+        """
+        Capture a single frame from the camera.
+        
+        RETURNS:
+        - success (bool): Whether frame was captured successfully
+        - frame (numpy array): The captured image as a NumPy array
+        
+        HOW IT WORKS:
+        OpenCV represents images as NumPy arrays. A 1280x720 color image is
+        an array of shape (720, 1280, 3) - height, width, and 3 color channels (BGR)
+        """
+        
+        if self.capture is None or not self.capture.isOpened():
+            return False, None
+        
+        # Read a frame from the camera
+        # ret = return value (True if successful)
+        # frame = the actual image data
+        ret, frame = self.capture.read()
+        
+        if not ret:
+            print("Warning: Failed to read frame from camera")
+            return False, None
+        
+        # Update frame count for FPS calculation
+        self.frame_count += 1
+        
+        # Calculate FPS every second
+        current_time = time.time()
+        elapsed = current_time - self.fps_start_time
+        if elapsed >= 1.0:  # Update FPS every second
+            self.fps = self.frame_count / elapsed
+            self.frame_count = 0
+            self.fps_start_time = current_time
+        
+        return True, frame
+    
+    
+    def flip_horizontal(self, frame):
+        """
+        Flip the frame horizontally to create mirror effect.
+        
+        WHY? When you look in a mirror, left and right are swapped.
+        Without flipping, raising your right hand makes the video's left hand move,
+        which feels unnatural and confusing for users.
+        
+        PARAMETERS:
+        - frame: The input image (NumPy array)
+        
+        RETURNS:
+        - flipped_frame: The horizontally flipped image
+        """
+        
+        # cv2.flip with flipCode=1 means flip horizontally
+        # flipCode=0 would flip vertically
+        # flipCode=-1 would flip both ways
+        flipped_frame = cv2.flip(frame, 1)
+        
+        return flipped_frame
+    
+    
+    def add_fps_overlay(self, frame):
+        """
+        Draw the current FPS on the frame for monitoring performance.
+        
+        This helps you see if your code is running smoothly.
+        Target is 30 FPS - if you see lower, something is slowing you down.
+        
+        PARAMETERS:
+        - frame: The image to draw on
+        
+        RETURNS:
+        - frame: The same image with FPS text added
+        """
+        
+        # Create the FPS text
+        fps_text = f"FPS: {self.fps:.1f}"
+        
+        # Draw the text on the frame
+        # Parameters: image, text, position, font, scale, color, thickness
+        cv2.putText(frame, 
+                   fps_text,
+                   (10, 30),  # Position (x, y) from top-left corner
+                   cv2.FONT_HERSHEY_SIMPLEX,  # Font type
+                   1.0,  # Font scale (size)
+                   (0, 255, 0),  # Color in BGR (green)
+                   2)  # Thickness
+        
+        return frame
+    
+    
+    def display(self, window_name="Spoken Wardrobe - Mirror"):
+        """
+        Display the video feed in a window.
+        This is the main loop that shows the mirror effect.
+        
+        PARAMETERS:
+        - window_name: Title of the window
+        
+        HOW IT WORKS:
+        This creates an infinite loop that continuously:
+        1. Reads a frame from camera
+        2. Flips it horizontally
+        3. Adds FPS counter
+        4. Shows it in a window
+        5. Checks if user pressed 'q' to quit
+        
+        IMPORTANT: This is a blocking function - it won't return until the user quits.
+        Later we'll make this run in a thread so other code can run simultaneously.
+        """
+        
+        # Create a named window
+        # cv2.WINDOW_NORMAL allows resizing
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        
+        print("\nStarting video display...")
+        print("Press 'Q' to quit")
+        print("Press 'F' to toggle fullscreen")
+        
+        is_fullscreen = False
+        
+        while self.is_running:
+            # Capture a frame
+            success, frame = self.read_frame()
+            
+            if not success:
+                print("Failed to capture frame, retrying...")
+                continue
+            
+            # Create the mirror effect
+            mirrored_frame = self.flip_horizontal(frame)
+            
+            # Add FPS overlay for performance monitoring
+            display_frame = self.add_fps_overlay(mirrored_frame)
+            
+            # Show the frame in the window
+            cv2.imshow(window_name, display_frame)
+            
+            # Wait for a key press (1 millisecond)
+            # This is necessary for the window to update
+            key = cv2.waitKey(1) & 0xFF
+            
+            # Check which key was pressed
+            if key == ord('q') or key == ord('Q'):
+                # User pressed Q - quit the application
+                print("\nQuitting...")
+                self.is_running = False
+                break
+            
+            elif key == ord('f') or key == ord('F'):
+                # User pressed F - toggle fullscreen
+                if is_fullscreen:
+                    cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, 
+                                        cv2.WINDOW_NORMAL)
+                    is_fullscreen = False
+                    print("Windowed mode")
+                else:
+                    cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, 
+                                        cv2.WINDOW_FULLSCREEN)
+                    is_fullscreen = True
+                    print("Fullscreen mode")
+        
+        # Cleanup
+        self.stop()
+    
+    
+    def stop(self):
+        """
+        Stop video capture and clean up resources.
+        
+        IMPORTANT: Always call this when you're done!
+        Not cleaning up can leave the camera locked or create memory leaks.
+        """
+        
+        self.is_running = False
+        
+        if self.capture is not None:
+            self.capture.release()
+            print("Camera released")
+        
+        # Close all OpenCV windows
+        cv2.destroyAllWindows()
+        print("Windows closed")
+    
+    
+    def get_current_frame(self):
+        """
+        Get the most recent frame in a thread-safe way.
+        
+        WHY THREAD-SAFE? Later when we add AI processing in other threads,
+        multiple parts of code might try to access the frame at once.
+        The lock ensures only one thread accesses at a time.
+        
+        RETURNS:
+        - frame: Copy of the most recent frame (or None if no frame yet)
+        """
+        
+        with self.frame_lock:
+            if self.current_frame is not None:
+                # Return a copy to prevent other threads from modifying it
+                return self.current_frame.copy()
+            else:
+                return None
+
+
+# ============================================================================
+# USAGE EXAMPLE - This is how you'll use this class
+# ============================================================================
+
+def main():
+    """
+    Main function to test the video capture system.
+    
+    This is your testing ground. Run this file directly to see if
+    your camera works and the mirror effect displays properly.
+    """
+    
+    print("=" * 60)
+    print("PHASE 1: VIDEO CAPTURE TEST")
+    print("=" * 60)
+    print("\nThis will open your webcam and display a mirrored view.")
+    print("Make sure you've granted camera permissions to Terminal/Python.")
+    print("\nPress 'Q' to quit when testing is complete.")
+    print("Press 'F' to toggle fullscreen.")
+    print("=" * 60)
+    
+    try:
+        # Create video capture instance
+        video = VideoCapture(camera_index=0, target_fps=30)
+        
+        # Start capturing
+        video.start()
+        
+        # Display the mirror feed
+        # This blocks until user presses Q
+        video.display()
+        
+    except Exception as e:
+        print(f"\nError occurred: {e}")
+        print("\nTROUBLESHOOTING:")
+        print("1. Check camera permissions in System Preferences > Security & Privacy")
+        print("2. Make sure no other app is using the camera")
+        print("3. Try a different camera_index (1, 2, etc.) if you have multiple cameras")
+        
+    finally:
+        # Always clean up
+        if 'video' in locals():
+            video.stop()
+        print("\nTest complete!")
+
+
+# This is Python's way of saying "run main() only if this file is run directly"
+# If you import this file into another file, main() won't run automatically
+if __name__ == "__main__":
+    main()
+
+
+# ============================================================================
+# TESTING CHECKLIST - Complete these before moving to Phase 2
+# ============================================================================
+# 
+# [ ] Camera opens without errors
+# [ ] Window displays video feed
+# [ ] Video is flipped horizontally (mirror effect works)
+# [ ] FPS counter shows ~30 FPS
+# [ ] Pressing Q cleanly exits the program
+# [ ] Pressing F toggles fullscreen
+# [ ] No camera or window cleanup errors when exiting
+# 
+# IF YOU HAVE ISSUES:
+# - FPS below 20: Your camera might be set too high resolution, try 640x480
+# - Camera won't open: Check System Preferences > Security & Privacy > Camera
+# - Window shows but black screen: Camera might be in use by another app
+# 
+# WHAT'S NEXT:
+# Once this works smoothly, you're ready for Phase 2 (Speech Recognition)
+# This video capture will be the foundation - everything else overlays on top.
+# ============================================================================

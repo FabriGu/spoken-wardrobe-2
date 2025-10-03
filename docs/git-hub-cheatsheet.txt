@@ -1,0 +1,434 @@
+# Git & GitHub Cheat Sheet for Spoken Wardrobe V2
+
+## Understanding Git Basics
+
+Git is a version control system that tracks changes to your code. Think of it like a save system in a video game where you can create checkpoints and go back to them if something breaks.
+
+**Key Concepts:**
+- **Repository (repo)**: Your project folder with Git tracking
+- **Commit**: A checkpoint/snapshot of your code
+- **Branch**: A parallel version of your code (like alternate timelines)
+- **Remote**: The copy of your repo on GitHub (in the cloud)
+- **Local**: The copy on your computer
+
+---
+
+## Daily Workflow Commands
+
+### Starting Your Work Session
+
+```bash
+# Navigate to your project
+cd ~/Projects/spoken_wardrobe_v2
+
+# Activate virtual environment
+source venv/bin/activate
+
+# Check what's changed since last commit
+git status
+
+# Get latest changes from GitHub (if working across multiple computers)
+git pull origin main
+```
+
+### Saving Your Work (Making Commits)
+
+```bash
+# See what files have changed
+git status
+
+# Stage specific files for commit
+git add src/modules/phase1_video_capture.py
+git add src/modules/phase2_speech_recognition.py
+
+# Or stage all changed files at once
+git add .
+
+# Create a commit with a message
+git commit -m "Implemented video capture with mirror effect"
+
+# Push your commit to GitHub
+git push origin main
+```
+
+### Good Commit Messages
+
+Write messages that explain WHAT and WHY, not HOW:
+
+**Good messages:**
+- "Add volume threshold calibration for speech detection"
+- "Fix MediaPipe segmentation mask resizing issue"
+- "Improve prompt engineering for dress generation"
+
+**Bad messages:**
+- "changes"
+- "fixed stuff"
+- "asdf"
+
+---
+
+## Going Back in Time (When Things Break)
+
+### Checking Your History
+
+```bash
+# See all your past commits
+git log
+
+# See a prettier, condensed version
+git log --oneline --graph
+
+# See the last 5 commits
+git log -5
+```
+
+### Undoing Changes
+
+**Case 1: You changed a file but haven't committed yet**
+```bash
+# Discard changes to a specific file (WARNING: this deletes your changes!)
+git checkout -- src/modules/phase1_video_capture.py
+
+# Discard ALL uncommitted changes (DANGEROUS!)
+git reset --hard HEAD
+```
+
+**Case 2: You committed something bad and want to undo**
+```bash
+# Undo the last commit but keep your changes
+git reset --soft HEAD~1
+
+# Undo the last commit and discard changes
+git reset --hard HEAD~1
+
+# Go back 3 commits
+git reset --hard HEAD~3
+```
+
+**Case 3: You want to go back to a specific old commit**
+```bash
+# Find the commit hash (looks like: a1b2c3d)
+git log --oneline
+
+# Create a new branch from that old commit (safe way)
+git checkout -b backup-branch a1b2c3d
+
+# Or force go back to that commit (DESTRUCTIVE!)
+git reset --hard a1b2c3d
+```
+
+---
+
+## Branching (Advanced but Useful)
+
+Branches let you experiment without breaking your main code. Think of them as parallel universes where you can try things out.
+
+### Creating and Using Branches
+
+```bash
+# Create a new branch for experimenting
+git checkout -b experiment-new-feature
+
+# Switch back to main branch
+git checkout main
+
+# List all branches
+git branch
+
+# Delete a branch (after you're done with it)
+git branch -d experiment-new-feature
+```
+
+### Merging Branches
+
+When your experiment works, you can merge it back into main:
+
+```bash
+# Make sure you're on main branch
+git checkout main
+
+# Merge your experiment into main
+git merge experiment-new-feature
+
+# Push the merged changes to GitHub
+git push origin main
+```
+
+---
+
+## Emergency Commands
+
+### "I Messed Everything Up!"
+
+```bash
+# Option 1: Stash your changes temporarily (saves them in a hidden place)
+git stash
+
+# Later, get your stashed changes back
+git stash pop
+
+# Option 2: Abandon all changes and reset to last commit
+git reset --hard HEAD
+
+# Option 3: Abandon everything and reset to what's on GitHub
+git fetch origin
+git reset --hard origin/main
+```
+
+### "I Committed to the Wrong Branch!"
+
+```bash
+# First, note the commit hash
+git log -1
+
+# Switch to the correct branch
+git checkout correct-branch
+
+# Apply that commit here
+git cherry-pick <commit-hash>
+
+# Go back and remove it from wrong branch
+git checkout wrong-branch
+git reset --hard HEAD~1
+```
+
+### "GitHub is Ahead of My Local Code!"
+
+This happens if you edit files on GitHub or work from another computer.
+
+```bash
+# Get the latest from GitHub
+git fetch origin
+
+# See differences
+git log HEAD..origin/main
+
+# Merge GitHub's changes into your local code
+git pull origin main
+```
+
+If you have conflicts (both you and GitHub changed the same lines):
+
+```bash
+# Pull will tell you about conflicts
+git pull origin main
+
+# Open conflicted files in VS Code - you'll see:
+# <<<<<<< HEAD
+# Your changes
+# =======
+# GitHub's changes
+# >>>>>>> origin/main
+
+# Edit the file to keep what you want, then:
+git add <conflicted-file>
+git commit -m "Resolved merge conflicts"
+git push origin main
+```
+
+---
+
+## Useful Git Commands for This Project
+
+### Checking Your Setup
+
+```bash
+# See your Git config
+git config --list
+
+# Set your name and email (for commits)
+git config --global user.name "Your Name"
+git config --global user.email "your.email@example.com"
+```
+
+### Viewing Differences
+
+```bash
+# See what changed in a file
+git diff src/modules/phase1_video_capture.py
+
+# See what you're about to commit
+git diff --staged
+
+# Compare two commits
+git diff <old-commit> <new-commit>
+```
+
+### Ignoring Files
+
+You already have .gitignore set up, but to add more:
+
+```bash
+# Edit .gitignore file
+code .gitignore
+
+# Add patterns for files to ignore:
+# *.log          - Ignore all .log files
+# temp/          - Ignore temp folder
+# *.mp4          - Ignore video files
+```
+
+---
+
+## Project-Specific Workflows
+
+### After Completing a Phase
+
+```bash
+# Save your work
+git add .
+git commit -m "Complete Phase 3: Body tracking with MediaPipe"
+git push origin main
+
+# Tag this milestone
+git tag -a phase3-complete -m "Completed body tracking implementation"
+git push origin phase3-complete
+```
+
+### Before Starting a New Phase
+
+```bash
+# Create a branch for the new phase (safer)
+git checkout -b phase4-ai-generation
+
+# Work on phase 4...
+# Test thoroughly...
+
+# When it works, merge back to main
+git checkout main
+git merge phase4-ai-generation
+git push origin main
+```
+
+### Creating Backups
+
+```bash
+# Create a backup branch before major changes
+git checkout -b backup-before-refactor
+git push origin backup-before-refactor
+
+# Go back to main and make your changes
+git checkout main
+```
+
+---
+
+## GitHub-Specific Features
+
+### Viewing Your Repo on GitHub
+
+1. Go to: `https://github.com/yourusername/spoken-wardrobe-v2`
+2. You can see all files, commits, and branches
+3. Green "Code" button lets you clone to another computer
+
+### Cloning on Another Computer
+
+```bash
+# Clone your repo
+git clone https://github.com/yourusername/spoken-wardrobe-v2.git
+cd spoken-wardrobe-v2
+
+# Set up virtual environment
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+pip install -r requirements-ai.txt
+```
+
+---
+
+## Common Scenarios for This Project
+
+### "I Want to Try Something Risky"
+
+```bash
+# Create experiment branch
+git checkout -b experiment-crazy-idea
+
+# Try your crazy idea...
+
+# If it works:
+git checkout main
+git merge experiment-crazy-idea
+
+# If it fails:
+git checkout main
+git branch -d experiment-crazy-idea
+```
+
+### "My Code Worked Yesterday!"
+
+```bash
+# Find yesterday's commits
+git log --since="yesterday"
+
+# Go back to yesterday's last commit
+git checkout <commit-hash>
+
+# Test if it works...
+
+# If this was the good version, go back to main and reset
+git checkout main
+git reset --hard <commit-hash>
+```
+
+### "I Need to Share This with Someone"
+
+```bash
+# Make sure everything is committed
+git add .
+git commit -m "Completed working prototype"
+git push origin main
+
+# Give them your GitHub URL:
+# https://github.com/yourusername/spoken-wardrobe-v2
+```
+
+---
+
+## Pro Tips
+
+1. **Commit often**: Commit every time something works, even if small. More commits = more restore points.
+
+2. **Use descriptive messages**: Future you will thank present you.
+
+3. **Push regularly**: If your computer dies, GitHub has your backups.
+
+4. **Don't commit large files**: Models, datasets, videos - put them in .gitignore.
+
+5. **Branch for experiments**: Main branch should always work. Experiments go in branches.
+
+6. **Read error messages**: Git errors are usually helpful and tell you exactly what to do.
+
+---
+
+## Quick Reference Card
+
+```bash
+# Daily commands
+git status                    # What changed?
+git add .                     # Stage all changes
+git commit -m "message"       # Save checkpoint
+git push origin main          # Upload to GitHub
+git pull origin main          # Download from GitHub
+
+# Undo commands
+git checkout -- <file>        # Undo file changes
+git reset --soft HEAD~1       # Undo last commit, keep changes
+git reset --hard HEAD~1       # Undo last commit, delete changes
+
+# Branch commands
+git branch                    # List branches
+git checkout -b new-branch    # Create and switch to new branch
+git checkout main             # Switch to main branch
+git merge other-branch        # Merge other-branch into current
+
+# Information commands
+git log                       # Show commit history
+git diff                      # Show changes
+git remote -v                 # Show GitHub connection
+```
+
+---
+
+Remember: Git is your safety net. Commit often, and you'll never lose work!
