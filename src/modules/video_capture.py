@@ -176,7 +176,7 @@ class VideoCaptureObject:
     
 def main():
     try: 
-        video = VideoCaptureObject(cameraIndex=1, targetFps=30)
+        video = VideoCaptureObject(cameraIndex=0, targetFps=30)
         video.start()
         video.display()
     except Exception as e:
