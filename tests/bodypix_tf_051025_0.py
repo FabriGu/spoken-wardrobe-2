@@ -2,36 +2,20 @@ import cv2
 import numpy as np
 from tf_bodypix.api import download_model, load_model, BodyPixModelPaths
 
-print("Starting program...")
-
 # Load model once at startup (MobileNet 50 for speed)
-print("Downloading/loading model...")
 bodypix_model = load_model(download_model(
     BodyPixModelPaths.MOBILENET_FLOAT_50_STRIDE_16
 ))
-print("Model loaded successfully!")
 
-print("Opening webcam...")
 cap = cv2.VideoCapture(0)
-
-if not cap.isOpened():
-    print("ERROR: Could not open webcam!")
-    exit()
-
-print("Webcam opened, starting loop...")
 
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
-        print("ERROR: Failed to read frame from webcam")
         break
-    
-    print("Frame captured, running segmentation...")
     
     # Run BodyPix segmentation
     result = bodypix_model.predict_single(frame)
-    
-    print("Segmentation complete, creating masks...")
     
     # Get binary person mask
     mask = result.get_mask(threshold=0.75)
@@ -40,6 +24,7 @@ while cap.isOpened():
     colored_mask = result.get_colored_part_mask(mask)
     
     # Extract specific body parts
+    # Get just the left arm (upper + lower front and back)
     left_arm_mask = result.get_part_mask(
         mask,
         part_names=[
@@ -48,9 +33,21 @@ while cap.isOpened():
         ]
     )
     
+    # Get just the torso
     torso_mask = result.get_part_mask(
         mask,
         part_names=['torso_front', 'torso_back']
+    )
+    
+    # Get just the legs
+    legs_mask = result.get_part_mask(
+        mask,
+        part_names=[
+            'left_upper_leg_front', 'left_upper_leg_back',
+            'left_lower_leg_front', 'left_lower_leg_back',
+            'right_upper_leg_front', 'right_upper_leg_back',
+            'right_lower_leg_front', 'right_lower_leg_back'
+        ]
     )
     
     # Apply different colors to different parts
@@ -67,4 +64,3 @@ while cap.isOpened():
 
 cap.release()
 cv2.destroyAllWindows()
-print("Program ended normally")

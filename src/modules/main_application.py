@@ -36,11 +36,11 @@ import sys
 # Import all our components from previous phases
 # Make sure all phase files are in the src/modules/ folder
 try:
-    from modules.phase1_video_capture import VideoCapture
-    from modules.phase2_speech_recognition import SpeechRecognizer
-    from modules.phase3_body_tracking import BodyTracker
-    from modules.phase4_ai_generation import ClothingGenerator
-    from modules.phase5_compositing import ClothingCompositor
+    from modules.video_capture import VideoCapture
+    from modules.speech_recognition import SpeechRecognizer
+    from modules.body_tracking import BodyTracker
+    from modules.ai_generation import ClothingGenerator
+    from modules.compositing import ClothingCompositor
     # Phase 6 (text effects) would be imported here when complete
     # from modules.phase6_text_effects import TextEffectRenderer
 except ImportError as e:
@@ -238,7 +238,7 @@ class SpokenWardrobeApp:
             """
             
             # Import here (in the worker process)
-            from modules.phase4_ai_generation import ClothingGenerator
+            from modules.ai_generation import ClothingGenerator
             import torch
             
             print("[Generation Worker] Starting up...")

@@ -1,0 +1,520 @@
+"""
+PHASE 3: BODY PART SEGMENTATION WITH BODYPIX
+=============================================
+
+PURPOSE: Use BodyPix to segment the body into 24 anatomical parts and create
+custom masks for different clothing types (t-shirt, dress, pants, etc.).
+
+LEARNING RESOURCES:
+- tf-bodypix GitHub: https://github.com/de-code/python-tf-bodypix
+- BodyPix Model Info: https://blog.tensorflow.org/2019/11/updated-bodypix-2.html
+- Available Body Parts: 24 parts including torso, arms, legs, hands, feet, face
+
+WHAT YOU'RE BUILDING:
+A system that takes a video frame, runs BodyPix segmentation, and returns
+precise masks showing exactly where clothing should be generated. You can
+dynamically configure which body parts to include based on clothing type.
+
+KEY DIFFERENCE FROM MEDIAPIPE:
+BodyPix gives you 24 distinct body parts that you can mix and match.
+Want just torso + arms for a t-shirt? Easy.
+Want torso + legs for a dress? Done.
+MediaPipe can't do this - it only gives binary person/background.
+"""
+
+import cv2
+import numpy as np
+import time
+from tf_bodypix.api import download_model, load_model, BodyPixModelPaths
+
+
+class BodyPartSegmenter:
+    """
+    This class handles body part segmentation using BodyPix.
+    
+    BODYPIX GIVES US 24 BODY PARTS:
+    - left_face, right_face
+    - left_upper_arm_front, left_upper_arm_back, left_lower_arm_front, left_lower_arm_back
+    - right_upper_arm_front, right_upper_arm_back, right_lower_arm_front, right_lower_arm_back
+    - left_hand, right_hand
+    - torso_front, torso_back
+    - left_upper_leg_front, left_upper_leg_back, left_lower_leg_front, left_lower_leg_back
+    - right_upper_leg_front, right_upper_leg_back, right_lower_leg_front, right_lower_leg_back
+    - left_foot, right_foot
+    
+    We combine these parts to create masks for different clothing types.
+    """
+    
+    # Define preset configurations for different clothing types
+    # These are the combinations you'll use most often
+    CLOTHING_PRESETS = {
+        # Configuration 1: Full body except head (for full dresses, jumpsuits)
+        'full_body': [
+            'torso_front', 'torso_back',
+            'left_upper_arm_front', 'left_upper_arm_back',
+            'left_lower_arm_front', 'left_lower_arm_back',
+            'right_upper_arm_front', 'right_upper_arm_back',
+            'right_lower_arm_front', 'right_lower_arm_back',
+            'left_hand', 'right_hand',
+            'left_upper_leg_front', 'left_upper_leg_back',
+            'left_lower_leg_front', 'left_lower_leg_back',
+            'right_upper_leg_front', 'right_upper_leg_back',
+            'right_lower_leg_front', 'right_lower_leg_back',
+            'left_foot', 'right_foot'
+        ],
+        
+        # Configuration 2: Torso + arms (for t-shirts, blouses, jackets)
+        'torso_and_arms': [
+            'torso_front', 'torso_back',
+            'left_upper_arm_front', 'left_upper_arm_back',
+            'left_lower_arm_front', 'left_lower_arm_back',
+            'right_upper_arm_front', 'right_upper_arm_back',
+            'right_lower_arm_front', 'right_lower_arm_back',
+            'left_hand', 'right_hand'
+        ],
+        
+        # Configuration 3: Just torso (for vests, corsets, tank tops)
+        'torso_only': [
+            'torso_front', 'torso_back'
+        ],
+        
+        # Configuration 4: Torso + legs (for dresses that cover legs)
+        'torso_and_legs': [
+            'torso_front', 'torso_back',
+            'left_upper_leg_front', 'left_upper_leg_back',
+            'left_lower_leg_front', 'left_lower_leg_back',
+            'right_upper_leg_front', 'right_upper_leg_back',
+            'right_lower_leg_front', 'right_lower_leg_back',
+            'left_foot', 'right_foot'
+        ],
+        
+        # Configuration 5: Just legs (for pants, skirts)
+        'legs_only': [
+            'left_upper_leg_front', 'left_upper_leg_back',
+            'left_lower_leg_front', 'left_lower_leg_back',
+            'right_upper_leg_front', 'right_upper_leg_back',
+            'right_lower_leg_front', 'right_lower_leg_back',
+            'left_foot', 'right_foot'
+        ]
+    }
+    
+    def __init__(self, model_type='mobilenet_50'):
+        """
+        Initialize the body part segmenter.
+        
+        PARAMETERS:
+        - model_type: Which BodyPix model to use
+                     'mobilenet_50' = fastest (RECOMMENDED for real-time)
+                     'mobilenet_75' = balanced
+                     'mobilenet_100' = accurate but slower
+                     'resnet50' = most accurate, much slower
+        
+        MODEL SPEED COMPARISON:
+        MobileNet 50: ~25-30 FPS on decent CPU (good for real-time)
+        MobileNet 75: ~20-25 FPS
+        MobileNet 100: ~15-20 FPS
+        ResNet50: ~5-10 FPS (too slow for video, but most accurate)
+        """
+        
+        self.model_type = model_type
+        self.model = None
+        
+        # Current mask configuration
+        self.current_preset = 'torso_and_arms'  # Default to t-shirt style
+        
+        # Store latest results
+        self.latest_mask = None
+        self.latest_colored_visualization = None
+        
+        # Performance tracking
+        self.processing_time_ms = 0
+        
+        print("BodyPartSegmenter initialized")
+        print(f"Model type: {model_type}")
+        print(f"Default preset: {self.current_preset}")
+    
+    
+    def load_model(self):
+        """
+        Load the BodyPix model.
+        
+        IMPORTANT: First run will download the model (~10-20MB depending on type).
+        This takes a minute or two, but subsequent runs load from cache quickly.
+        """
+        
+        print(f"\nLoading BodyPix model ({self.model_type})...")
+        print("First time will download the model (this may take a minute)")
+        
+        start_time = time.time()
+        
+        # Map our friendly names to BodyPix model paths
+        model_map = {
+            'mobilenet_50': BodyPixModelPaths.MOBILENET_FLOAT_50_STRIDE_16,
+            'mobilenet_75': BodyPixModelPaths.MOBILENET_FLOAT_75_STRIDE_16,
+            'mobilenet_100': BodyPixModelPaths.MOBILENET_FLOAT_100_STRIDE_16,
+            'resnet50': BodyPixModelPaths.RESNET50_FLOAT_STRIDE_16
+        }
+        
+        model_path = model_map.get(self.model_type, model_map['mobilenet_50'])
+        
+        # Download and load the model
+        self.model = load_model(download_model(model_path))
+        
+        load_time = time.time() - start_time
+        print(f"✓ Model loaded in {load_time:.1f} seconds!\n")
+    
+    
+    def process_frame(self, frame, preset=None):
+        """
+        Process a video frame to get body part segmentation.
+        
+        PARAMETERS:
+        - frame: Input image (BGR format from OpenCV)
+        - preset: Which clothing preset to use (optional, uses current_preset if None)
+        
+        RETURNS:
+        - mask: Binary mask showing where clothing should go (255=clothing, 0=background)
+        - colored_viz: Colored visualization showing all 24 body parts (for debugging)
+        
+        This is the main function you'll call every frame.
+        """
+        
+        if self.model is None:
+            raise Exception("Model not loaded! Call load_model() first.")
+        
+        if preset is not None:
+            self.current_preset = preset
+        
+        start_time = time.time()
+        
+        # Run BodyPix segmentation
+        # This is where the neural network processes the image
+        result = self.model.predict_single(frame)
+        
+        # Get the binary person mask (separates person from background)
+        # threshold=0.75 means we're 75% sure a pixel is part of a person
+        person_mask = result.get_mask(threshold=0.75)
+        
+        # Get the mask for our specific body parts
+        part_names = self.CLOTHING_PRESETS[self.current_preset]
+        clothing_mask = result.get_part_mask(person_mask, part_names=part_names)
+        
+        # Convert tensor to numpy array and clean it up
+        if hasattr(clothing_mask, 'numpy'):
+            clothing_mask = clothing_mask.numpy()
+        
+        # Remove extra dimensions and convert to binary 0/255
+        clothing_mask = np.squeeze(clothing_mask)  # Remove single dimensions
+        clothing_mask = (clothing_mask > 0).astype(np.uint8) * 255
+        
+        # Get colored visualization for debugging
+        colored_viz = result.get_colored_part_mask(person_mask)
+        if hasattr(colored_viz, 'numpy'):
+            colored_viz = colored_viz.numpy()
+        colored_viz = colored_viz.astype(np.uint8)
+        
+        # Store results
+        self.latest_mask = clothing_mask
+        self.latest_colored_visualization = colored_viz
+        
+        # Track performance
+        self.processing_time_ms = (time.time() - start_time) * 1000
+        
+        return clothing_mask, colored_viz
+    
+    
+    def get_mask_for_inpainting(self, frame, preset=None):
+        """
+        Get a mask ready to feed into Stable Diffusion Inpainting.
+        
+        This is the key function for your pipeline!
+        Returns a clean, processed mask that tells SD: "paint clothing here"
+        
+        PARAMETERS:
+        - frame: Video frame to process
+        - preset: Clothing type preset to use
+        
+        RETURNS:
+        - mask: Binary mask (255=paint here, 0=leave alone)
+        
+        The mask is cleaned up with morphological operations to:
+        - Remove small noise/holes
+        - Smooth edges for natural blending
+        - Ensure clean boundaries
+        """
+        
+        # Get the raw mask
+        mask, _ = self.process_frame(frame, preset)
+        
+        # Clean up the mask
+        # These operations make the mask smoother and remove artifacts
+        
+        # Close small holes in the mask
+        kernel_close = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_close, iterations=2)
+        
+        # Remove small noise
+        kernel_open = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open, iterations=1)
+        
+        # Smooth the edges
+        mask = cv2.GaussianBlur(mask, (5, 5), 0)
+        
+        # Re-binarize after blur (convert back to pure 0/255)
+        mask = (mask > 127).astype(np.uint8) * 255
+        
+        return mask
+    
+    
+    def visualize_mask_overlay(self, frame, mask, color=[255, 0, 255], alpha=0.6):
+        """
+        Overlay the mask on the frame with a color for visualization.
+        
+        This helps you see exactly what area will be sent to Stable Diffusion.
+        
+        PARAMETERS:
+        - frame: Original video frame
+        - mask: Binary mask to visualize
+        - color: Color for the overlay [B, G, R]
+        - alpha: Opacity (0=transparent, 1=opaque)
+        
+        RETURNS:
+        - Frame with colored overlay showing the masked area
+        """
+        
+        overlay = frame.copy()
+        
+        # Apply color where mask is non-zero
+        mask_bool = mask > 0
+        overlay[mask_bool] = overlay[mask_bool] * (1 - alpha) + np.array(color) * alpha
+        
+        return overlay.astype(np.uint8)
+    
+    
+    def set_preset(self, preset_name):
+        """
+        Change the current clothing preset.
+        
+        PARAMETERS:
+        - preset_name: One of the keys in CLOTHING_PRESETS
+                      ('full_body', 'torso_and_arms', 'torso_only', 
+                       'torso_and_legs', 'legs_only')
+        """
+        
+        if preset_name in self.CLOTHING_PRESETS:
+            self.current_preset = preset_name
+            print(f"Preset changed to: {preset_name}")
+        else:
+            print(f"Unknown preset: {preset_name}")
+            print(f"Available presets: {list(self.CLOTHING_PRESETS.keys())}")
+    
+    
+    def get_available_presets(self):
+        """Return list of available clothing presets."""
+        return list(self.CLOTHING_PRESETS.keys())
+    
+    
+    def is_person_detected(self):
+        """Check if a person mask was generated in the last frame."""
+        return self.latest_mask is not None and np.any(self.latest_mask > 0)
+
+
+# ============================================================================
+# USAGE EXAMPLE - Testing Body Part Segmentation
+# ============================================================================
+
+def main():
+    """
+    Test the body part segmentation system.
+    This shows you how to use different presets and get masks for inpainting.
+    """
+    
+    print("=" * 60)
+    print("PHASE 3: BODY PART SEGMENTATION TEST")
+    print("=" * 60)
+    print("\nThis will segment your body into 24 parts and create masks")
+    print("for different clothing types.")
+    print("\nControls:")
+    print("- Q: Quit")
+    print("- 1: Full body preset (dress/jumpsuit)")
+    print("- 2: Torso + arms preset (t-shirt/jacket)")
+    print("- 3: Torso only preset (vest/tank top)")
+    print("- 4: Torso + legs preset (long dress)")
+    print("- 5: Legs only preset (pants/skirt)")
+    print("- V: Toggle colored visualization")
+    print("- S: Save current mask")
+    print("=" * 60)
+    
+    # Initialize video capture
+    cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    
+    if not cap.isOpened():
+        print("Error: Could not open camera")
+        return
+    
+    # Initialize segmenter
+    segmenter = BodyPartSegmenter(model_type='mobilenet_50')
+    segmenter.load_model()
+    
+    # Display settings
+    show_visualization = False
+    save_counter = 0
+    
+    # FPS tracking
+    fps = 0
+    frame_count = 0
+    fps_start_time = time.time()
+    
+    print("\nStarting body part segmentation...")
+    print(f"Current preset: {segmenter.current_preset}")
+    
+    try:
+        while True:
+            # Read frame
+            ret, frame = cap.read()
+            if not ret:
+                print("Failed to read frame")
+                continue
+            
+            # Mirror the frame (feels more natural)
+            frame = cv2.flip(frame, 1)
+            
+            # Get mask for inpainting
+            mask = segmenter.get_mask_for_inpainting(frame)
+            
+            # Create visualization
+            if show_visualization:
+                # Show the colored body parts
+                display_frame = segmenter.latest_colored_visualization
+            else:
+                # Show mask overlay on original frame
+                display_frame = segmenter.visualize_mask_overlay(
+                    frame, mask, color=[255, 0, 255], alpha=0.5
+                )
+            
+            # Add info text
+            if segmenter.is_person_detected():
+                status = f"Person detected | Preset: {segmenter.current_preset}"
+                color = (0, 255, 0)
+            else:
+                status = "No person detected"
+                color = (0, 0, 255)
+            
+            cv2.putText(display_frame, status, (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            
+            # Show processing time
+            cv2.putText(display_frame, 
+                       f"Processing: {segmenter.processing_time_ms:.1f}ms",
+                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            
+            # Calculate and show FPS
+            frame_count += 1
+            elapsed = time.time() - fps_start_time
+            if elapsed >= 1.0:
+                fps = frame_count / elapsed
+                frame_count = 0
+                fps_start_time = time.time()
+            
+            cv2.putText(display_frame, f"FPS: {fps:.1f}",
+                       (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            
+            # Show the mask in a separate window
+            cv2.imshow("Mask (White = Clothing Area)", mask)
+            cv2.imshow("Body Part Segmentation", display_frame)
+            
+            # Handle key presses
+            key = cv2.waitKey(1) & 0xFF
+            
+            if key == ord('q') or key == ord('Q'):
+                break
+            
+            elif key == ord('1'):
+                segmenter.set_preset('full_body')
+            
+            elif key == ord('2'):
+                segmenter.set_preset('torso_and_arms')
+            
+            elif key == ord('3'):
+                segmenter.set_preset('torso_only')
+            
+            elif key == ord('4'):
+                segmenter.set_preset('torso_and_legs')
+            
+            elif key == ord('5'):
+                segmenter.set_preset('legs_only')
+            
+            elif key == ord('v') or key == ord('V'):
+                show_visualization = not show_visualization
+                mode = "colored parts" if show_visualization else "mask overlay"
+                print(f"Visualization: {mode}")
+            
+            elif key == ord('s') or key == ord('S'):
+                # Save current mask
+                if segmenter.is_person_detected():
+                    filename = f"mask_{segmenter.current_preset}_{save_counter}.png"
+                    cv2.imwrite(filename, mask)
+                    print(f"Saved: {filename}")
+                    save_counter += 1
+    
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+    
+    finally:
+        # Cleanup
+        print("\nCleaning up...")
+        cap.release()
+        cv2.destroyAllWindows()
+        print("Test complete!")
+
+
+if __name__ == "__main__":
+    main()
+
+
+# ============================================================================
+# TESTING CHECKLIST
+# ============================================================================
+#
+# [ ] BodyPix installs: pip install tf-bodypix[all]
+# [ ] Model downloads successfully on first run
+# [ ] Camera opens and shows video
+# [ ] Person is detected (colored segmentation appears)
+# [ ] Press 1-5: Different body areas highlighted
+# [ ] Separate mask window shows clean black/white mask
+# [ ] Press V: Toggle between colored parts and mask overlay
+# [ ] Press S: Save masks as PNG files
+# [ ] FPS stays around 20-30 (acceptable for this model)
+# [ ] Masks are clean with smooth edges
+# [ ] No crashes or errors
+#
+# WHAT YOU SHOULD SEE:
+# - Main window: Your video with magenta overlay showing clothing area
+# - Mask window: Pure black/white showing exact area for SD inpainting
+# - Different presets show different body coverage
+# - White pixels = where Stable Diffusion will paint clothing
+# - Black pixels = areas that will be preserved
+#
+# INTEGRATION WITH PHASE 4:
+# The mask from get_mask_for_inpainting() is ready to use with:
+# - Stable Diffusion Inpainting pipeline
+# - Feed: original frame + mask + text prompt
+# - Get back: frame with clothing generated on the masked area
+#
+# ADVANTAGES OF BODYPIX:
+# ✓ Precise anatomical segmentation (24 body parts)
+# ✓ Mix and match parts for any clothing type
+# ✓ No landmarks needed - pure segmentation
+# ✓ Works at any angle or pose
+# ✓ Masks ready for inpainting without processing
+# ✓ Can easily add new preset combinations
+#
+# NEXT STEPS:
+# - Test all presets (1-5) to see different clothing areas
+# - Save sample masks with 'S' key
+# - Move to Phase 4 to integrate with Stable Diffusion
+# - Use these masks as inpaint_mask in SD pipeline
+#
+# ============================================================================

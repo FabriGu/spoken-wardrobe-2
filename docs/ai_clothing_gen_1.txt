@@ -1,3 +1,31 @@
+"""
+PHASE 4: AI CLOTHING GENERATION WITH STABLE DIFFUSION INPAINTING
+=================================================================
+
+PURPOSE: Take the body part mask from Phase 3 and use Stable Diffusion Inpainting
+to generate clothing directly on the person in the video frame.
+
+LEARNING RESOURCES:
+- SD Inpainting: https://huggingface.co/docs/diffusers/using-diffusers/inpaint
+- Inpainting Pipeline: https://huggingface.co/runwayml/stable-diffusion-inpainting
+- Prompt Engineering: https://huggingface.co/docs/diffusers/using-diffusers/write_prompts
+
+WHAT YOU'RE BUILDING:
+A system that takes:
+1. Original video frame
+2. Mask showing where clothing should go (from Phase 3)
+3. Text prompt describing the clothing (from Phase 2)
+
+And generates:
+1. Inpainted image with clothing on the person
+2. Cropped clothing PNG with transparency (for overlay on live video)
+
+KEY DIFFERENCE FROM OLD APPROACH:
+OLD: Generate clothing on white background → remove bg → warp to fit
+NEW: Inpaint directly on the person using mask → crop to get clothing PNG
+Much simpler and more natural results!
+"""
+
 import torch
 from diffusers import StableDiffusionInpaintPipeline
 from PIL import Image
@@ -6,32 +34,67 @@ import cv2
 import time
 import os
 
+
 class ClothingGenerator:
+    """
+    This class handles AI-powered clothing generation using Stable Diffusion Inpainting.
+    
+    HOW IT WORKS:
+    1. Takes a video frame + mask from BodyPix
+    2. Uses SD Inpainting to paint clothing in the masked area
+    3. Extracts just the clothing using the mask
+    4. Returns both full inpainted image and clothing PNG
+    """
+    
     def __init__(self, model_id="runwayml/stable-diffusion-inpainting", cache_dir="./models"):
+        """
+        Initialize the clothing generation system.
         
-        self.model_id = model_id 
+        PARAMETERS:
+        - model_id: Which SD model to use
+                   "runwayml/stable-diffusion-inpainting" is the official SD 1.5 inpainting model
+        - cache_dir: Where to store downloaded model weights
+        
+        MODEL DOWNLOAD: ~5GB on first run (includes VAE, UNet, text encoder)
+        """
+        
+        self.model_id = model_id
         self.cache_dir = cache_dir
-
-        #create cache directory (Claude)
+        
+        # Create cache directory
         os.makedirs(cache_dir, exist_ok=True)
-
-        #initialized when load model 
+        
+        # Will be initialized when we load the model
         self.pipeline = None
         self.device = None
-
-        #generation parameters 
-        self.num_inference_steps = 30 # higher = higher quality but slower
-        self.guidance_scale = 7.5 #how closely to follow prompt (1-20)
-
-        #cache for generated images 
+        
+        # Generation parameters (can be tuned)
+        self.num_inference_steps = 30  # More steps = higher quality but slower
+        self.guidance_scale = 7.5  # How closely to follow the prompt (1-20)
+        
+        # Cache for generated images
         self.generation_cache = {}
-
-        print("model initialized")
-
+        
+        print("ClothingGenerator initialized")
+        print(f"Model: {model_id}")
+        print(f"Cache directory: {cache_dir}")
+    
+    
     def load_model(self):
+        """
+        Load the Stable Diffusion Inpainting model.
+        
+        WARNING: First run downloads ~5GB!
+        This takes 2-5 minutes depending on internet speed.
+        Subsequent runs load from cache in ~10 seconds.
+        """
+        
+        print("\nLoading Stable Diffusion Inpainting model...")
+        print("First time will download ~5GB (be patient!)")
+        
         start_time = time.time()
-
-        #device (claude)
+        
+        # Determine device
         if torch.backends.mps.is_available():
             self.device = "mps"  # Mac GPU
             print("Using Mac GPU (MPS) acceleration")
@@ -41,28 +104,30 @@ class ClothingGenerator:
         else:
             self.device = "cpu"
             print("Using CPU (will be slow!)")
-
-        #load impainting pipeline 
+        
+        # Load the inpainting pipeline
+        # This is specifically designed for inpainting tasks
         self.pipeline = StableDiffusionInpaintPipeline.from_pretrained(
             self.model_id,
             torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
             cache_dir=self.cache_dir
         )
-
-        #move to device
+        
+        # Move to device
         self.pipeline = self.pipeline.to(self.device)
-
-        #enable optimization
+        
+        # Enable optimizations
         self.pipeline.enable_attention_slicing()
-
-        #on Mac memory iptimi
+        
+        # On Mac, additional memory optimization
         if self.device == "mps":
             self.pipeline.enable_attention_slicing("max")
-
-        load_time = time.time() - start_time 
-        print("model loaded in {load_time:.1f} seconbds")
-
-    def create_prompt(self, user_input): #CLAUDE
+        
+        load_time = time.time() - start_time
+        print(f"✓ Model loaded in {load_time:.1f} seconds!")
+    
+    
+    def create_prompt(self, user_input):
         """
         Transform user input into a detailed prompt for SD Inpainting.
         
@@ -93,35 +158,56 @@ class ClothingGenerator:
         
         return prompt, negative_prompt
     
-    def generate_clothing_inpainting(self, frame, mask, prompt, negative_prompt=None, seed = None):
-        if self.popeline is None:
-            raise Exception("Model not loaded")
+    
+    def generate_clothing_inpainting(self, frame, mask, prompt, negative_prompt=None, seed=None):
+        """
+        Generate clothing using SD Inpainting.
         
-        #for time computation
+        THIS IS WHERE THE MAGIC HAPPENS!
+        SD looks at the frame, sees the mask, and paints clothing in that area.
+        
+        PARAMETERS:
+        - frame: Original video frame (numpy array, BGR)
+        - mask: Binary mask from Phase 3 (numpy array, 0 or 255)
+        - prompt: Text describing the clothing
+        - negative_prompt: What to avoid
+        - seed: Random seed for reproducibility
+        
+        RETURNS:
+        - inpainted_image: PIL Image with clothing generated
+        """
+        
+        if self.pipeline is None:
+            raise Exception("Model not loaded! Call load_model() first.")
+        
+        print(f"\nGenerating clothing...")
+        print(f"Prompt: {prompt[:100]}...")
+        
         start_time = time.time()
-
-        #bgr to rgb 
+        
+        # Convert frame to PIL Image (RGB)
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        #python image library conversion of frame
         image_pil = Image.fromarray(frame_rgb)
-
-        #python image library conversion mask 
+        
+        # Convert mask to PIL Image
+        # SD Inpainting expects: 255=paint here, 0=leave alone
         mask_pil = Image.fromarray(mask)
-
-        #ensure correct sizes (SD works best with 512x512)
+        
+        # Ensure correct sizes (SD works best with 512x512)
+        # We'll resize, process, then resize back
         original_size = image_pil.size
         target_size = (512, 512)
         
         image_resized = image_pil.resize(target_size, Image.LANCZOS)
         mask_resized = mask_pil.resize(target_size, Image.NEAREST)
-
-        #set random see if provided 
+        
+        # Set random seed if provided
         if seed is not None:
-            generator = torch.Generator(device = self.device).manual_seed(seed)
+            generator = torch.Generator(device=self.device).manual_seed(seed)
         else:
             generator = None
-
-        # Run SD Inpainting CLAUDE)
+        
+        # Run SD Inpainting
         # The model will:
         # 1. Look at the original image
         # 2. See where the mask is
@@ -147,18 +233,34 @@ class ClothingGenerator:
         print(f"✓ Generation complete in {gen_time:.1f} seconds!")
         
         return inpainted_image
-
+    
+    
     def extract_clothing_with_transparency(self, inpainted_image, mask):
-        #convert image to numpy
+        """
+        Extract just the clothing from the inpainted image using the mask.
+        
+        This creates a PNG with transparency so you can overlay it on video.
+        
+        PARAMETERS:
+        - inpainted_image: PIL Image with clothing generated
+        - mask: Binary mask showing where clothing is (numpy array)
+        
+        RETURNS:
+        - clothing_png: PIL Image (RGBA) with clothing only, transparent elsewhere
+        """
+        
+        print("Extracting clothing with transparency...")
+        
+        # Convert inpainted image to numpy
         inpainted_array = np.array(inpainted_image)
-
-        #make sure mask is same size (claude)
+        
+        # Ensure mask is same size as image
         if mask.shape[:2] != inpainted_array.shape[:2]:
             mask = cv2.resize(mask, 
                             (inpainted_array.shape[1], inpainted_array.shape[0]),
                             interpolation=cv2.INTER_NEAREST)
-            
-        #Create RGBA image (RGB + Alpha channel)
+        
+        # Create RGBA image (RGB + Alpha channel)
         clothing_rgba = np.zeros(
             (inpainted_array.shape[0], inpainted_array.shape[1], 4),
             dtype=np.uint8
@@ -178,7 +280,8 @@ class ClothingGenerator:
         print("✓ Clothing extracted with transparency")
         
         return clothing_png
-
+    
+    
     def generate_clothing_from_text(self, frame, mask, text, use_cache=True):
         """
         Main function: Generate clothing from text prompt.
@@ -269,6 +372,10 @@ class ClothingGenerator:
             
             print("ClothingGenerator cleaned up")
 
+
+# ============================================================================
+# USAGE EXAMPLE - Integration with Phase 3
+# ============================================================================
 
 def main():
     """
@@ -378,4 +485,58 @@ if __name__ == "__main__":
     main()
 
 
-
+# ============================================================================
+# TESTING CHECKLIST
+# ============================================================================
+#
+# PREREQUISITES:
+# [ ] Phase 3 is working
+# [ ] You've saved test_frame.png and test_mask.png from Phase 3
+#
+# FIRST RUN:
+# [ ] Model downloads successfully (~5GB)
+# [ ] Model loads without errors
+# [ ] Test generation completes
+# [ ] Two PNG files saved per prompt
+#
+# CHECK RESULTS:
+# [ ] *_full.png shows person wearing generated clothing
+# [ ] Clothing fits naturally on the body
+# [ ] *_clothing.png has transparency (checkerboard in image viewer)
+# [ ] Clothing in PNG matches the masked area
+# [ ] Multiple prompts generate different styles
+#
+# QUALITY CHECKS:
+# [ ] Clothing looks realistic and detailed
+# [ ] No weird artifacts or distortions
+# [ ] Clothing edges blend smoothly with body
+# [ ] Colors and textures match the prompt
+#
+# COMMON ISSUES:
+# - Out of memory: Reduce num_inference_steps to 20
+# - Slow generation: Normal on Mac CPU, expect 30-60 seconds
+# - Poor quality: Increase guidance_scale to 9.0 or num_inference_steps to 50
+# - Distorted clothing: Make sure mask is clean (check Phase 3)
+# - Model download fails: Check internet, try again
+#
+# WHAT THIS GIVES YOU:
+# ✓ Direct inpainting on the person (no warping needed)
+# ✓ Natural-looking clothing that fits the pose
+# ✓ Clothing PNG ready for live video overlay
+# ✓ Fast iteration with caching
+# ✓ Foundation for real-time application
+#
+# INTEGRATION WITH OTHER PHASES:
+# - Phase 2: Text prompt comes from Whisper transcription
+# - Phase 3: Mask comes from BodyPix segmentation
+# - Phase 5: Clothing PNG gets overlaid on live video
+# - Phase 8: All orchestrated in main application
+#
+# NEXT STEPS:
+# - Test with different body poses
+# - Try different clothing styles
+# - Tune num_inference_steps and guidance_scale
+# - Move to Phase 5 to overlay on live video
+# - Integrate with Phase 2 for speech-to-clothing pipeline
+#
+# ============================================================================

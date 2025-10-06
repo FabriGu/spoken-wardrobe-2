@@ -1,0 +1,748 @@
+"""
+PHASE 3: BODY SEGMENTATION WITH MEDIAPIPE
+==========================================
+
+PURPOSE: Segment the user's body into distinct regions (torso, arms, legs, face)
+using MediaPipe's segmentation model to create precise masks for clothing overlay.
+
+LEARNING RESOURCES:
+- MediaPipe Pose: https://google.github.io/mediapipe/solutions/pose.html
+- MediaPipe Segmentation: https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter
+- Body Segmentation Explained: https://developers.google.com/mediapipe/solutions/vision/pose_landmarker
+- Segmentation Masks: https://google.github.io/mediapipe/solutions/pose#pose-segmentation-mask
+
+WHAT YOU'RE BUILDING:
+Instead of estimating where the torso is, we use MediaPipe's segmentation to
+get pixel-perfect masks of body regions. This gives us exact areas to apply
+clothing, making the inpainting much more accurate and natural.
+
+KEY DIFFERENCE FROM PREVIOUS APPROACH:
+OLD: Calculate bounding box from shoulder/hip landmarks (estimation)
+NEW: Get actual pixel-level segmentation mask of torso region (precise)
+"""
+
+import cv2
+import mediapipe as mp
+import numpy as np
+import time
+
+
+class BodySegmenter:
+    """
+    This class handles body segmentation using MediaPipe to create precise
+    masks for different body regions.
+    
+    WHAT MEDIAPIPE SEGMENTATION GIVES US:
+    1. Pixel-perfect outline of the entire person
+    2. Ability to isolate specific body parts (torso, arms, etc.)
+    3. Real-time performance suitable for live video
+    4. Masks ready to use directly for inpainting
+    
+    THE ADVANTAGE:
+    Instead of guessing where clothing should go, we have an exact mask
+    showing "these pixels are the torso" - perfect for feeding to an
+    inpainting model.
+    """
+    
+    def __init__(self, min_detection_confidence=0.5, min_tracking_confidence=0.5):
+        """
+        Initialize the body segmentation system.
+        
+        PARAMETERS:
+        - min_detection_confidence: How sure MediaPipe must be to detect a person (0-1)
+        - min_tracking_confidence: How sure to keep tracking (0-1)
+        """
+        
+        self.min_detection_confidence = min_detection_confidence
+        self.min_tracking_confidence = min_tracking_confidence
+        
+        # Initialize MediaPipe Pose with segmentation enabled
+        self.mp_pose = mp.solutions.pose
+        self.mp_drawing = mp.solutions.drawing_utils
+        self.mp_drawing_styles = mp.solutions.drawing_styles
+        
+        # Create the pose detector WITH segmentation enabled
+        # This is crucial - enable_segmentation=True gives us the masks
+        self.pose = self.mp_pose.Pose(
+            static_image_mode=False,  # False = video mode (optimized for tracking)
+            model_complexity=1,  # 0=lite, 1=full, 2=heavy (1 is good balance)
+            smooth_landmarks=True,  # Smooth out jittery movement
+            enable_segmentation=True,  # THIS IS KEY - enables body segmentation
+            min_detection_confidence=min_detection_confidence,
+            min_tracking_confidence=min_tracking_confidence
+        )
+        
+        # Store latest detection results
+        self.latest_landmarks = None
+        self.latest_segmentation_mask = None
+        
+        # Cache for processed masks
+        self.mask_cache = {}
+        
+        # Performance tracking
+        self.processing_time = 0
+        
+        print("BodySegmenter initialized")
+        print(f"Segmentation enabled: True")
+        print(f"Model complexity: 1 (balanced)")
+        print(f"Detection confidence: {min_detection_confidence}")
+        print(f"Tracking confidence: {min_tracking_confidence}")
+    
+    
+    def process_frame(self, frame):
+        """
+        Process a video frame to get body segmentation and landmarks.
+        
+        PARAMETERS:
+        - frame: Input image (BGR format from OpenCV)
+        
+        RETURNS:
+        - results: MediaPipe results object containing landmarks and segmentation
+        - processed_frame: Frame with visualization (for debugging)
+        """
+        
+        start_time = time.time()
+        
+        # MediaPipe expects RGB, OpenCV uses BGR
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Process the frame with MediaPipe
+        # This runs the neural network and returns segmentation + landmarks
+        results = self.pose.process(frame_rgb)
+        
+        # Calculate processing time
+        self.processing_time = (time.time() - start_time) * 1000  # Convert to ms
+        
+        # Create a copy for visualization
+        processed_frame = frame.copy()
+        
+        # Check if a person was detected
+        if results.pose_landmarks:
+            self.latest_landmarks = results.pose_landmarks
+            
+            # Store the raw segmentation mask
+            if results.segmentation_mask is not None:
+                self.latest_segmentation_mask = results.segmentation_mask
+            
+            # Draw landmarks for visualization
+            self.mp_drawing.draw_landmarks(
+                processed_frame,
+                results.pose_landmarks,
+                self.mp_pose.POSE_CONNECTIONS,
+                landmark_drawing_spec=self.mp_drawing_styles.get_default_pose_landmarks_style()
+            )
+        
+        else:
+            # No person detected
+            self.latest_landmarks = None
+            self.latest_segmentation_mask = None
+            cv2.putText(processed_frame, "No person detected", (10, 60),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        
+        # Add processing time
+        cv2.putText(processed_frame, f"Segmentation: {self.processing_time:.1f}ms",
+                   (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                   0.5, (255, 255, 255), 1)
+        
+        return results, processed_frame
+    
+    
+    def get_full_body_mask(self, frame_shape, threshold=0.5):
+        """
+        Get a binary mask of the entire person.
+        
+        PARAMETERS:
+        - frame_shape: Shape to resize mask to (height, width, channels)
+        - threshold: Confidence threshold for segmentation (0-1)
+                    Lower = more inclusive, higher = stricter
+        
+        RETURNS:
+        - Binary mask: 255 where person is, 0 where background is
+        """
+        
+        if self.latest_segmentation_mask is None:
+            return None
+        
+        # MediaPipe segmentation mask is a float array (0-1) representing
+        # the probability that each pixel belongs to the person
+        mask = self.latest_segmentation_mask
+        
+        # Convert to binary (0 or 255)
+        # Pixels above threshold = person (255), below = background (0)
+        binary_mask = (mask > threshold).astype(np.uint8) * 255
+        
+        # Resize to match frame dimensions
+        height, width = frame_shape[:2]
+        resized_mask = cv2.resize(binary_mask, (width, height))
+        
+        return resized_mask
+    
+    
+    def get_torso_mask(self, frame_shape, threshold=0.5, include_shoulders=True):
+        """
+        Get a mask of just the torso region.
+        
+        THIS IS THE KEY FUNCTION FOR YOUR USE CASE!
+        We use landmarks to identify the torso region, then apply that
+        to the segmentation mask to get ONLY the torso pixels.
+        
+        PARAMETERS:
+        - frame_shape: Shape of the frame
+        - threshold: Segmentation confidence threshold
+        - include_shoulders: Whether to include shoulder area in torso
+        
+        RETURNS:
+        - Mask showing only the torso region (perfect for clothing overlay)
+        """
+        
+        if self.latest_segmentation_mask is None or self.latest_landmarks is None:
+            return None
+        
+        height, width = frame_shape[:2]
+        
+        # Get the full body mask first
+        full_mask = self.get_full_body_mask(frame_shape, threshold)
+        
+        if full_mask is None:
+            return None
+        
+        # Create a mask that defines the torso region using landmarks
+        torso_region_mask = np.zeros((height, width), dtype=np.uint8)
+        
+        # Get landmark positions
+        landmarks = self.latest_landmarks.landmark
+        
+        # Define torso landmarks
+        # These are the key points that define the torso area
+        if include_shoulders:
+            # Include shoulders to neck to hips
+            torso_landmarks = [
+                self.mp_pose.PoseLandmark.LEFT_SHOULDER,
+                self.mp_pose.PoseLandmark.RIGHT_SHOULDER,
+                self.mp_pose.PoseLandmark.RIGHT_HIP,
+                self.mp_pose.PoseLandmark.LEFT_HIP,
+            ]
+        else:
+            # More conservative - just mid-torso
+            # Using mid-shoulder points to hips
+            torso_landmarks = [
+                self.mp_pose.PoseLandmark.LEFT_SHOULDER,
+                self.mp_pose.PoseLandmark.RIGHT_SHOULDER,
+                self.mp_pose.PoseLandmark.RIGHT_HIP,
+                self.mp_pose.PoseLandmark.LEFT_HIP,
+            ]
+        
+        # Convert landmarks to pixel coordinates
+        torso_points = []
+        for landmark_idx in torso_landmarks:
+            landmark = landmarks[landmark_idx]
+            x = int(landmark.x * width)
+            y = int(landmark.y * height)
+            torso_points.append([x, y])
+        
+        torso_points = np.array(torso_points, dtype=np.int32)
+        
+        # Create polygon mask for torso region
+        # This fills the area between shoulders and hips
+        cv2.fillPoly(torso_region_mask, [torso_points], 255)
+        
+        # Expand the torso region slightly to ensure full coverage
+        # This adds padding around the landmark polygon
+        kernel = np.ones((20, 20), np.uint8)
+        torso_region_mask = cv2.dilate(torso_region_mask, kernel, iterations=2)
+        
+        # Combine the torso region mask with the segmentation mask
+        # This gives us: "pixels that are BOTH in torso region AND part of person"
+        torso_mask = cv2.bitwise_and(full_mask, torso_region_mask)
+        
+        # Optional: Remove the head from torso mask
+        # This prevents clothing from covering the face
+        torso_mask = self._exclude_head_from_mask(torso_mask, landmarks, width, height)
+        
+        return torso_mask
+    
+    
+    def _exclude_head_from_mask(self, mask, landmarks, width, height):
+        """
+        Remove the head region from a mask.
+        
+        We don't want clothing to cover the face, so we identify the head
+        region using landmarks and exclude it from the torso mask.
+        
+        PARAMETERS:
+        - mask: The mask to modify
+        - landmarks: MediaPipe landmarks
+        - width, height: Frame dimensions
+        
+        RETURNS:
+        - Mask with head area removed
+        """
+        
+        # Get head landmarks
+        nose = landmarks[self.mp_pose.PoseLandmark.NOSE]
+        left_eye = landmarks[self.mp_pose.PoseLandmark.LEFT_EYE]
+        right_eye = landmarks[self.mp_pose.PoseLandmark.RIGHT_EYE]
+        left_ear = landmarks[self.mp_pose.PoseLandmark.LEFT_EAR]
+        right_ear = landmarks[self.mp_pose.PoseLandmark.RIGHT_EAR]
+        
+        # Calculate head center and approximate radius
+        head_center_x = int(nose.x * width)
+        head_center_y = int(nose.y * height)
+        
+        # Estimate head radius from eye/ear positions
+        # This is approximate but works well
+        eye_dist = abs(left_eye.x - right_eye.x) * width
+        head_radius = int(eye_dist * 1.5)  # Head is ~1.5x eye distance
+        
+        # Create head exclusion mask
+        head_mask = np.zeros_like(mask)
+        cv2.circle(head_mask, (head_center_x, head_center_y), head_radius, 255, -1)
+        
+        # Remove head from the mask
+        # Where head_mask is 255 (head area), set mask to 0
+        mask_without_head = cv2.bitwise_and(mask, cv2.bitwise_not(head_mask))
+        
+        return mask_without_head
+    
+    
+    def get_upper_body_mask(self, frame_shape, threshold=0.5):
+        """
+        Get mask for upper body (torso + arms).
+        
+        Useful if you want clothing that includes sleeves.
+        
+        PARAMETERS:
+        - frame_shape: Shape of the frame
+        - threshold: Segmentation confidence threshold
+        
+        RETURNS:
+        - Mask showing upper body (torso + arms, excluding head and legs)
+        """
+        
+        if self.latest_segmentation_mask is None or self.latest_landmarks is None:
+            return None
+        
+        height, width = frame_shape[:2]
+        
+        # Get full body mask
+        full_mask = self.get_full_body_mask(frame_shape, threshold)
+        
+        if full_mask is None:
+            return None
+        
+        # Create upper body region mask using landmarks
+        landmarks = self.latest_landmarks.landmark
+        
+        # Define upper body polygon
+        # From shoulders, down arms, to hips
+        upper_body_landmarks = [
+            self.mp_pose.PoseLandmark.LEFT_SHOULDER,
+            self.mp_pose.PoseLandmark.LEFT_ELBOW,
+            self.mp_pose.PoseLandmark.LEFT_WRIST,
+            self.mp_pose.PoseLandmark.LEFT_HIP,
+            self.mp_pose.PoseLandmark.RIGHT_HIP,
+            self.mp_pose.PoseLandmark.RIGHT_WRIST,
+            self.mp_pose.PoseLandmark.RIGHT_ELBOW,
+            self.mp_pose.PoseLandmark.RIGHT_SHOULDER,
+        ]
+        
+        # Convert to pixel coordinates
+        upper_points = []
+        for landmark_idx in upper_body_landmarks:
+            landmark = landmarks[landmark_idx]
+            x = int(landmark.x * width)
+            y = int(landmark.y * height)
+            upper_points.append([x, y])
+        
+        upper_points = np.array(upper_points, dtype=np.int32)
+        
+        # Create polygon mask
+        upper_body_region = np.zeros((height, width), dtype=np.uint8)
+        cv2.fillPoly(upper_body_region, [upper_points], 255)
+        
+        # Dilate to ensure full coverage
+        kernel = np.ones((15, 15), np.uint8)
+        upper_body_region = cv2.dilate(upper_body_region, kernel, iterations=1)
+        
+        # Combine with segmentation mask
+        upper_body_mask = cv2.bitwise_and(full_mask, upper_body_region)
+        
+        # Exclude head
+        upper_body_mask = self._exclude_head_from_mask(
+            upper_body_mask, landmarks, width, height
+        )
+        
+        return upper_body_mask
+    
+    
+    def get_legs_mask(self, frame_shape, threshold=0.5):
+        """
+        Get mask for legs region.
+        
+        Useful if you want to generate pants or lower body clothing.
+        
+        PARAMETERS:
+        - frame_shape: Shape of the frame
+        - threshold: Segmentation confidence threshold
+        
+        RETURNS:
+        - Mask showing legs region
+        """
+        
+        if self.latest_segmentation_mask is None or self.latest_landmarks is None:
+            return None
+        
+        height, width = frame_shape[:2]
+        
+        # Get full body mask
+        full_mask = self.get_full_body_mask(frame_shape, threshold)
+        
+        if full_mask is None:
+            return None
+        
+        # Create legs region mask
+        landmarks = self.latest_landmarks.landmark
+        
+        # Define legs polygon (hips to ankles)
+        legs_landmarks = [
+            self.mp_pose.PoseLandmark.LEFT_HIP,
+            self.mp_pose.PoseLandmark.LEFT_KNEE,
+            self.mp_pose.PoseLandmark.LEFT_ANKLE,
+            self.mp_pose.PoseLandmark.RIGHT_ANKLE,
+            self.mp_pose.PoseLandmark.RIGHT_KNEE,
+            self.mp_pose.PoseLandmark.RIGHT_HIP,
+        ]
+        
+        # Convert to pixel coordinates
+        leg_points = []
+        for landmark_idx in legs_landmarks:
+            landmark = landmarks[landmark_idx]
+            x = int(landmark.x * width)
+            y = int(landmark.y * height)
+            leg_points.append([x, y])
+        
+        leg_points = np.array(leg_points, dtype=np.int32)
+        
+        # Create polygon mask
+        legs_region = np.zeros((height, width), dtype=np.uint8)
+        cv2.fillPoly(legs_region, [leg_points], 255)
+        
+        # Dilate slightly
+        kernel = np.ones((10, 10), np.uint8)
+        legs_region = cv2.dilate(legs_region, kernel, iterations=1)
+        
+        # Combine with segmentation mask
+        legs_mask = cv2.bitwise_and(full_mask, legs_region)
+        
+        return legs_mask
+    
+    
+    def visualize_segmentation(self, frame, mask_type='torso', overlay_alpha=0.5):
+        """
+        Visualize the segmentation mask overlaid on the frame.
+        
+        This is super helpful for debugging and seeing exactly what
+        area will be used for clothing overlay.
+        
+        PARAMETERS:
+        - frame: Input frame
+        - mask_type: Which mask to visualize ('full', 'torso', 'upper', 'legs')
+        - overlay_alpha: Opacity of the colored overlay (0-1)
+        
+        RETURNS:
+        - Frame with colored mask overlay
+        """
+        
+        # Get the appropriate mask
+        if mask_type == 'full':
+            mask = self.get_full_body_mask(frame.shape)
+            color = [0, 255, 0]  # Green for full body
+        elif mask_type == 'torso':
+            mask = self.get_torso_mask(frame.shape)
+            color = [255, 0, 255]  # Magenta for torso
+        elif mask_type == 'upper':
+            mask = self.get_upper_body_mask(frame.shape)
+            color = [0, 255, 255]  # Cyan for upper body
+        elif mask_type == 'legs':
+            mask = self.get_legs_mask(frame.shape)
+            color = [255, 255, 0]  # Yellow for legs
+        else:
+            return frame
+        
+        if mask is None:
+            return frame
+        
+        # Create colored overlay where mask is present
+        overlay = frame.copy()
+        overlay[mask > 0] = overlay[mask > 0] * (1 - overlay_alpha) + np.array(color) * overlay_alpha
+        
+        # Add legend
+        cv2.putText(overlay, f"Mask: {mask_type}", (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        
+        return overlay.astype(np.uint8)
+    
+    
+    def get_mask_for_inpainting(self, frame_shape, region='torso', invert=False):
+        """
+        Get a mask ready to use for inpainting models.
+        
+        THIS IS THE KEY FUNCTION FOR YOUR PIPELINE!
+        Returns a mask in the exact format needed for Stable Diffusion inpainting:
+        - White (255) = area to inpaint (where clothing goes)
+        - Black (0) = area to preserve (background and excluded regions)
+        
+        PARAMETERS:
+        - frame_shape: Shape of the frame
+        - region: Which body region ('torso', 'upper', 'legs', 'full')
+        - invert: If True, inverts the mask (useful for some inpainting models)
+        
+        RETURNS:
+        - Mask ready for inpainting (single channel, 0 or 255)
+        """
+        
+        # Get the appropriate region mask
+        if region == 'torso':
+            mask = self.get_torso_mask(frame_shape)
+        elif region == 'upper':
+            mask = self.get_upper_body_mask(frame_shape)
+        elif region == 'legs':
+            mask = self.get_legs_mask(frame_shape)
+        elif region == 'full':
+            mask = self.get_full_body_mask(frame_shape)
+        else:
+            raise ValueError(f"Unknown region: {region}")
+        
+        if mask is None:
+            return None
+        
+        # Clean up the mask
+        # Remove small noise and smooth edges
+        kernel = np.ones((5, 5), np.uint8)
+        
+        # Remove small holes
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        
+        # Remove small noise
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        
+        # Smooth edges
+        mask = cv2.GaussianBlur(mask, (5, 5), 0)
+        mask = (mask > 127).astype(np.uint8) * 255  # Re-binarize
+        
+        # Invert if requested
+        if invert:
+            mask = cv2.bitwise_not(mask)
+        
+        return mask
+    
+    
+    def is_person_detected(self):
+        """Check if a person is currently detected in the frame."""
+        return self.latest_landmarks is not None
+    
+    
+    def cleanup(self):
+        """Clean up MediaPipe resources."""
+        if self.pose:
+            self.pose.close()
+            print("BodySegmenter cleaned up")
+
+
+# ============================================================================
+# USAGE EXAMPLE - Testing the Segmentation
+# ============================================================================
+
+def main():
+    """
+    Test the body segmentation system.
+    This shows you the different masks you can generate.
+    """
+    
+    print("=" * 60)
+    print("PHASE 3: BODY SEGMENTATION TEST")
+    print("=" * 60)
+    print("\nThis will show different body region masks.")
+    print("These masks can be used directly for inpainting!")
+    print("\nControls:")
+    print("- Q: Quit")
+    print("- 1: Show full body mask")
+    print("- 2: Show torso mask")
+    print("- 3: Show upper body mask")
+    print("- 4: Show legs mask")
+    print("- S: Save current mask")
+    print("=" * 60)
+    
+    # Initialize video capture
+    cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    
+    if not cap.isOpened():
+        print("Error: Could not open camera")
+        return
+    
+    # Initialize segmenter
+    segmenter = BodySegmenter(
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5
+    )
+    
+    # Display mode
+    current_mask_type = 'torso'  # Default to torso
+    
+    print("\nStarting segmentation test...")
+    print(f"Current mask: {current_mask_type}")
+    
+    frame_count = 0
+    
+    try:
+        while True:
+            # Read frame
+            ret, frame = cap.read()
+            if not ret:
+                print("Failed to read frame")
+                break
+            
+            # Mirror the frame
+            frame = cv2.flip(frame, 1)
+            
+            # Process with segmenter
+            results, _ = segmenter.process_frame(frame)
+            
+            # Visualize current mask
+            if segmenter.is_person_detected():
+                display_frame = segmenter.visualize_segmentation(
+                    frame,
+                    mask_type=current_mask_type,
+                    overlay_alpha=0.6
+                )
+                
+                # Also show the raw mask in a separate window
+                raw_mask = segmenter.get_mask_for_inpainting(
+                    frame.shape,
+                    region=current_mask_type
+                )
+                
+                if raw_mask is not None:
+                    # Convert to 3 channels for display
+                    mask_display = cv2.cvtColor(raw_mask, cv2.COLOR_GRAY2BGR)
+                    cv2.imshow("Inpainting Mask (White = Clothing Area)", mask_display)
+            else:
+                display_frame = frame
+                cv2.putText(display_frame, "No person detected", (10, 60),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            
+            # Show FPS
+            cv2.putText(display_frame, f"Mask type: {current_mask_type}", (10, 90),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            
+            # Display
+            cv2.imshow("Body Segmentation", display_frame)
+            
+            # Handle key presses
+            key = cv2.waitKey(1) & 0xFF
+            
+            if key == ord('q') or key == ord('Q'):
+                break
+            
+            elif key == ord('1'):
+                current_mask_type = 'full'
+                print(f"Switched to: {current_mask_type} mask")
+            
+            elif key == ord('2'):
+                current_mask_type = 'torso'
+                print(f"Switched to: {current_mask_type} mask")
+            
+            elif key == ord('3'):
+                current_mask_type = 'upper'
+                print(f"Switched to: {current_mask_type} mask")
+            
+            elif key == ord('4'):
+                current_mask_type = 'legs'
+                print(f"Switched to: {current_mask_type} mask")
+            
+            elif key == ord('s') or key == ord('S'):
+                # Save current mask
+                if segmenter.is_person_detected():
+                    mask = segmenter.get_mask_for_inpainting(
+                        frame.shape,
+                        region=current_mask_type
+                    )
+                    if mask is not None:
+                        filename = f"mask_{current_mask_type}_{frame_count}.png"
+                        cv2.imwrite(filename, mask)
+                        print(f"Saved mask: {filename}")
+                        frame_count += 1
+            
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+    
+    finally:
+        # Cleanup
+        print("\nCleaning up...")
+        segmenter.cleanup()
+        cap.release()
+        cv2.destroyAllWindows()
+        print("Test complete!")
+
+
+if __name__ == "__main__":
+    main()
+
+
+# ============================================================================
+# TESTING CHECKLIST
+# ============================================================================
+#
+# [ ] MediaPipe installs without errors
+# [ ] Camera opens and shows video
+# [ ] Person is detected (segmentation appears)
+# [ ] Press 1: Full body shown in green overlay
+# [ ] Press 2: Torso shown in magenta overlay (excludes head, arms, legs)
+# [ ] Press 3: Upper body shown in cyan (torso + arms, excludes head)
+# [ ] Press 4: Legs shown in yellow
+# [ ] Separate "Inpainting Mask" window shows black/white mask
+# [ ] White areas in mask correspond exactly to colored overlay
+# [ ] Press S saves mask as PNG file
+# [ ] Saved masks are clean (no noise, smooth edges)
+# [ ] Masks track body movement in real-time
+# [ ] No lag or stuttering
+#
+# WHAT YOU SHOULD SEE:
+# - Colored overlay on your body showing the selected region
+# - Separate window with pure black/white mask
+# - White pixels = where clothing will be generated
+# - Black pixels = areas that will be preserved
+# - Head is always excluded (you don't want clothing on face!)
+#
+# USING THESE MASKS FOR INPAINTING:
+# The masks from get_mask_for_inpainting() are ready to use with:
+# - Stable Diffusion Inpainting
+# - Any image inpainting model that expects binary masks
+# - White (255) = "generate clothing here"
+# - Black (0) = "don't touch this area"
+#
+# ADVANTAGES OVER BOUNDING BOX APPROACH:
+# ✓ Pixel-perfect accuracy (not estimation)
+# ✓ Automatically excludes head/face
+# ✓ Follows body contours exactly
+# ✓ No awkward rectangular overlays
+# ✓ Works at any angle or pose
+# ✓ Can target specific body regions
+#
+# INTEGRATION WITH PHASE 4 (AI GENERATION):
+# Instead of generating clothing on white background and warping,
+# you can now:
+# 1. Get torso mask from this phase
+# 2. Use it directly with Stable Diffusion Inpainting
+# 3. The model generates clothing that perfectly fits the mask
+# 4. No need for complex warping or perspective transforms!
+#
+# NEXT STEPS:
+# - Test all mask types (full, torso, upper, legs)
+# - Save several test masks to see consistency
+# - Move to Phase 4 and integrate with inpainting
+# - Use these masks as the "inpaint_mask" parameter in SD
+#
+# ============================================================================
