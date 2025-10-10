@@ -233,6 +233,8 @@ class BodySegmenter:
     def is_person_detected(self):
         return self.latest_mask is not None and np.any(self.latest_mask > 0)
 
+        
+
 def main():
     # Initialize video capture
     cap = cv2.VideoCapture(0)
@@ -347,6 +349,10 @@ def main():
                     filename = f"mask_{segmenter.current_preset}_{save_counter}.png"
                     cv2.imwrite(filename, mask)
                     print(f"Saved: {filename}")
+                    # save original frame too
+                    orig_filename = f"frame_{segmenter.current_preset}_{save_counter}.png"
+                    cv2.imwrite(orig_filename, frame)
+                    print(f"Saved: {orig_filename}")
                     save_counter += 1
     
     except KeyboardInterrupt:

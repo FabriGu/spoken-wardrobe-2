@@ -20,7 +20,7 @@ class ClothingGenerator:
         self.device = None
 
         #generation parameters 
-        self.num_inference_steps = 30 # higher = higher quality but slower
+        self.num_inference_steps = 10 # higher = higher quality but slower
         self.guidance_scale = 7.5 #how closely to follow prompt (1-20)
 
         #cache for generated images 
@@ -34,19 +34,23 @@ class ClothingGenerator:
         #device (claude)
         if torch.backends.mps.is_available():
             self.device = "mps"  # Mac GPU
+            dtype = torch.float32
             print("Using Mac GPU (MPS) acceleration")
         elif torch.cuda.is_available():
             self.device = "cuda"  # Nvidia GPU
+            dtype = torch.float16
             print("Using NVIDIA GPU (CUDA) acceleration")
         else:
             self.device = "cpu"
+            dtype = torch.float32
             print("Using CPU (will be slow!)")
 
         #load impainting pipeline 
         self.pipeline = StableDiffusionInpaintPipeline.from_pretrained(
             self.model_id,
-            torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
-            cache_dir=self.cache_dir
+            torch_dtype= dtype,
+            cache_dir=self.cache_dir,
+            safety_checker=None  # Disable safety checker for now
         )
 
         #move to device
@@ -60,7 +64,7 @@ class ClothingGenerator:
             self.pipeline.enable_attention_slicing("max")
 
         load_time = time.time() - start_time 
-        print("model loaded in {load_time:.1f} seconbds")
+        print(f"model loaded in {load_time:.1f} seconbds")
 
     def create_prompt(self, user_input): #CLAUDE
         """
@@ -90,42 +94,126 @@ class ClothingGenerator:
         bad anatomy, extra limbs, disconnected, floating objects,
         text, watermark, signature, face distortion, warped clothing,
         unnatural proportions, artifacts, noise"""
+
+        # prompt = f"bright colorful {user_input} pattern on t-shirt"
+        # negative_prompt = "dark, black, shadow, blurry, low quality"
         
         return prompt, negative_prompt
     
+    # def generate_clothing_inpainting(self, frame, mask, prompt, negative_prompt=None, seed = None):
+    #     if self.pipeline is None:
+    #         raise Exception("Model not loaded")
+        
+    #     #for time computation
+    #     start_time = time.time()
+
+    #     #bgr to rgb 
+    #     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    #     #python image library conversion of frame
+    #     image_pil = Image.fromarray(frame_rgb)
+
+    #     #python image library conversion mask 
+    #     # mask_inverted = mask_inverted = 255 - mask
+    #     # mask_inverted = cv2.bitwise_not(mask) #invert mask (claude)
+    #     mask_pil = Image.fromarray(mask)
+
+    #     #ensure correct sizes (SD works best with 512x512)
+    #     original_size = image_pil.size
+    #     print(original_size)
+        
+    #     # target_size = original_size
+        
+    #     # target_size = (512, 512)
+    #     # image_resized = image_pil.resize(target_size, Image.LANCZOS)
+    #     # mask_resized = mask_pil.resize(target_size, Image.NEAREST)
+
+    #     image_resized = image_pil
+    #     mask_resized = mask_pil
+
+    #     #set random see if provided 
+    #     if seed is not None:
+    #         generator = torch.Generator(device = self.device).manual_seed(seed)
+    #     else:
+    #         generator = None
+
+    #     # Run SD Inpainting CLAUDE)
+    #     # The model will:
+    #     # 1. Look at the original image
+    #     # 2. See where the mask is
+    #     # 3. Generate clothing that fits naturally in that area
+    #     with torch.no_grad():
+    #         result = self.pipeline(
+    #             prompt=prompt,
+    #             negative_prompt=negative_prompt,
+    #             image=image_resized,
+    #             mask_image=mask_resized,
+    #             num_inference_steps=self.num_inference_steps,
+    #             guidance_scale=self.guidance_scale,
+    #             generator=generator
+    #         )
+        
+    #     # Get the generated image
+    #     inpainted_image = result.images[0]
+        
+    #     # Resize back to original size
+    #     inpainted_image = inpainted_image.resize(original_size, Image.LANCZOS)
+        
+    #     gen_time = time.time() - start_time
+    #     print(f"✓ Generation complete in {gen_time:.1f} seconds!")
+        
+    #     return inpainted_image
+
     def generate_clothing_inpainting(self, frame, mask, prompt, negative_prompt=None, seed = None):
-        if self.popeline is None:
+        if self.pipeline is None:
             raise Exception("Model not loaded")
         
-        #for time computation
         start_time = time.time()
 
-        #bgr to rgb 
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        #python image library conversion of frame
-        image_pil = Image.fromarray(frame_rgb)
-
-        #python image library conversion mask 
-        mask_pil = Image.fromarray(mask)
-
-        #ensure correct sizes (SD works best with 512x512)
-        original_size = image_pil.size
-        target_size = (512, 512)
+        # Validate inputs before any conversion
+        print("\n" + "="*60)
+        print("DEBUGGING: Checking input data before PIL conversion")
+        print("="*60)
         
+        validate_array_for_pil(frame, "frame from OpenCV")
+        validate_array_for_pil(mask, "mask from body segmentation")
+        
+        # BGR to RGB conversion
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        validate_array_for_pil(frame_rgb, "frame after BGR→RGB")
+        
+        # Convert to PIL with EXPLICIT modes
+        image_pil = Image.fromarray(frame_rgb, mode='RGB')
+        mask_pil = Image.fromarray(mask, mode='L')  # Explicit grayscale mode
+        
+        # Verify PIL conversion worked correctly
+        print(f"\nPIL Image mode: {image_pil.mode}, size: {image_pil.size}")
+        print(f"PIL Mask mode: {mask_pil.mode}, size: {mask_pil.size}")
+        
+        # Resize to the model's expected input size
+        original_size = image_pil.size
+        target_size = (512, 512)  # SD inpainting was trained on this size
+        
+        print(f"\nResizing from {original_size} to {target_size}")
         image_resized = image_pil.resize(target_size, Image.LANCZOS)
-        mask_resized = mask_pil.resize(target_size, Image.NEAREST)
-
-        #set random see if provided 
+        mask_resized = mask_pil.resize(target_size, Image.NEAREST)  # NEAREST for masks to keep sharp edges
+        
+        # Save debug images to see exactly what SD receives
+        image_resized.save("debug_image_to_sd.png")
+        mask_resized.save("debug_mask_to_sd.png")
+        print("Saved debug_image_to_sd.png and debug_mask_to_sd.png")
+        print("Check these files to see what Stable Diffusion receives")
+        
+        # Set seed for reproducibility
         if seed is not None:
             generator = torch.Generator(device = self.device).manual_seed(seed)
         else:
             generator = None
 
-        # Run SD Inpainting CLAUDE)
-        # The model will:
-        # 1. Look at the original image
-        # 2. See where the mask is
-        # 3. Generate clothing that fits naturally in that area
+        print("\nCalling Stable Diffusion pipeline...")
+        print(f"Prompt: {prompt[:100]}...")  # Show first 100 chars
+        print("="*60 + "\n")
+        
+        # Run SD Inpainting
         with torch.no_grad():
             result = self.pipeline(
                 prompt=prompt,
@@ -136,6 +224,36 @@ class ClothingGenerator:
                 guidance_scale=self.guidance_scale,
                 generator=generator
             )
+
+        
+        # Add this inspection code:
+        print("\n=== INSPECTING RESULT OBJECT ===")
+        print(f"Result type: {type(result)}")
+        print(f"Result attributes: {dir(result)}")
+        print(f"Number of images in result: {len(result.images)}")
+
+        for i, img in enumerate(result.images):
+            print(f"\nImage {i}:")
+            print(f"  Type: {type(img)}")
+            print(f"  Mode: {img.mode}")
+            print(f"  Size: {img.size}")
+            
+            # Convert to numpy to check actual pixel values
+            img_array = np.array(img)
+            print(f"  Array shape: {img_array.shape}")
+            print(f"  Array dtype: {img_array.dtype}")
+            print(f"  Value range: [{img_array.min()}, {img_array.max()}]")
+            print(f"  Mean value: {img_array.mean():.2f}")
+            
+            # Save it with a clear name
+            img.save(f"result_image_{i}.png")
+            print(f"  Saved as: result_image_{i}.png")
+
+        # Check if there's a hidden black image issue
+        if hasattr(result, 'nsfw_content_detected'):
+            print(f"\nNSFW content detected: {result.nsfw_content_detected}")
+            
+        print("=== END RESULT INSPECTION ===\n")
         
         # Get the generated image
         inpainted_image = result.images[0]
@@ -209,7 +327,7 @@ class ClothingGenerator:
             
             # Generate with inpainting
             inpainted_full = self.generate_clothing_inpainting(
-                frame, mask, prompt, negative_prompt
+                frame, mask, prompt, negative_prompt, seed=100
             )
             
             # Extract clothing with transparency
@@ -270,6 +388,41 @@ class ClothingGenerator:
             print("ClothingGenerator cleaned up")
 
 
+def validate_array_for_pil(array, name="array"):
+    """
+    Debug function to check if array is safe for PIL conversion.
+    This helps catch silent data type and value range issues.
+    """
+    print(f"\n=== Validating {name} ===")
+    print(f"Shape: {array.shape}")
+    print(f"Dtype: {array.dtype}")
+    print(f"Value range: [{array.min()}, {array.max()}]")
+    print(f"Unique values: {np.unique(array)[:10]}")  # Show first 10 unique values
+    
+    # Check for common problems
+    if array.dtype not in [np.uint8, np.int32, np.float32]:
+        print(f"⚠️  WARNING: dtype {array.dtype} may cause PIL issues!")
+        print(f"   Recommended: convert to uint8 for images/masks")
+    
+    if len(array.shape) == 3 and array.shape[2] == 1:
+        print(f"⚠️  WARNING: Shape has single channel dimension {array.shape}")
+        print(f"   PIL expects 2D arrays for grayscale, not 3D with 1 channel")
+    
+    if array.dtype in [np.float32, np.float64]:
+        if array.max() <= 1.0:
+            print(f"⚠️  WARNING: Float array in [0,1] range")
+            print(f"   PIL expects [0,255] for uint8 images")
+            print(f"   Multiply by 255 and convert: (array * 255).astype(np.uint8)")
+    
+    if name.lower().find('mask') >= 0:
+        # Special checks for masks
+        if not (array.min() == 0 and array.max() == 255):
+            print(f"⚠️  WARNING: Mask should have values 0 and 255 only")
+            print(f"   Current range: [{array.min()}, {array.max()}]")
+    
+    print(f"=== End validation ===\n")
+    return array   
+
 def main():
     """
     Test the clothing generation with inpainting.
@@ -325,15 +478,15 @@ def main():
     print("="*60)
     
     # Check for test files
-    if not os.path.exists('test_frame.png') or not os.path.exists('test_mask.png'):
+    if not os.path.exists('test_frame_0.png') or not os.path.exists('test_mask_0.png'):
         print("\n⚠ Test files not found!")
         print("Please run Phase 3 first and save a frame + mask.")
         print("Then rerun this test.")
         return
     
     # Load test frame and mask
-    test_frame = cv2.imread('test_frame.png')
-    test_mask = cv2.imread('test_mask.png', cv2.IMREAD_GRAYSCALE)
+    test_frame = cv2.imread('test_frame_0.png')
+    test_mask = cv2.imread('test_mask_0.png', cv2.IMREAD_GRAYSCALE)
     
     print("\n✓ Test files loaded!")
     print(f"Frame size: {test_frame.shape}")

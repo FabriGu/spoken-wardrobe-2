@@ -94,7 +94,7 @@ class SpeechRecognizer:
                 input=True,  # We're capturing input (not playing output)
                 frames_per_buffer=self.CHUNK,  # Read in chunks of 1024 samples
                 stream_callback=None,  # We'll read manually for more control
-                input_device_index=4
+                input_device_index=3
             )
             
             print("\n✓ Microphone opened successfully!")
