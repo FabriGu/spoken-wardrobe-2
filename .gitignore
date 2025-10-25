@@ -8,12 +8,13 @@ models/
 *.safetensors
 *.ckpt
 generated_images/
-generated_images_copy/
+generated_images_backup/
 generated_meshes/
-generated_meshes_1/0/
+generated_meshes_1/
 output/0/
 cache/
 external/
 calibration_data/
 calibration_data_1/
 masks/
+# tests_backup/

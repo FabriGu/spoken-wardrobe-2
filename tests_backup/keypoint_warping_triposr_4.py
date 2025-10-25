@@ -39,6 +39,14 @@ class SimpleLBS:
     def __init__(self, mesh_path):
         print(f"Loading: {mesh_path}")
         self.mesh = trimesh.load(mesh_path)
+        #  rotate upsidedown on z axis and to the left on y axis
+        self.mesh = self.mesh.apply_transform(trimesh.transformations.rotation_matrix(
+            np.radians(180), [0, 0, 1]
+        ))
+        self.mesh = self.mesh.apply_transform(trimesh.transformations.rotation_matrix(
+            np.radians(-90), [0, 1, 0]
+        ))
+
         # flip mesh upside down 
         self.mesh.apply_transform(trimesh.transformations.rotation_matrix(
             np.radians(180), [1, 0, 0]
@@ -311,7 +319,7 @@ def main():
     
     # Find mesh
     mesh_dir = Path("generated_meshes")
-    meshes = list(mesh_dir.glob("*_triposr.obj")) if mesh_dir.exists() else []
+    meshes = list(mesh_dir.glob("3dMesh_1_clothing.obj")) if mesh_dir.exists() else []
     
     if not meshes:
         print("✗ No meshes found in generated_meshes/")

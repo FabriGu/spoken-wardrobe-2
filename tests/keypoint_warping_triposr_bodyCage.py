@@ -66,6 +66,13 @@ class CageBasedClothingOverlay:
         self.mesh = trimesh.load(mesh_path)
         print(f"  Vertices: {len(self.mesh.vertices):,}")
         print(f"  Faces: {len(self.mesh.faces):,}")
+
+        self.mesh = self.mesh.apply_transform(trimesh.transformations.rotation_matrix(
+            np.radians(90), [0, 1, 0]
+        ))
+        # self.mesh = self.mesh.apply_transform(trimesh.transformations.rotation_matrix(
+        #     np.radians(90), [0, 0, 1]
+        # ))
         
         # Center and normalize in model space
         center = self.mesh.vertices.mean(axis=0)
@@ -406,7 +413,7 @@ def main():
         print("✗ No generated_meshes folder")
         return
     
-    meshes = sorted(list(mesh_dir.glob("*_triposr.obj")))
+    meshes = sorted(list(mesh_dir.glob("3dMesh_1_clothing.obj")))
     if len(meshes) == 0:
         print("✗ No meshes found")
         return

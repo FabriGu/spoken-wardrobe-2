@@ -78,6 +78,14 @@ class LinearBlendSkinningOverlay:
         
         # Load mesh - KEEP IN MODEL SPACE
         self.mesh = trimesh.load(mesh_path)
+       
+        self.mesh = self.mesh.apply_transform(trimesh.transformations.rotation_matrix(
+            np.radians(-90), [0, 1, 0]
+        ))
+        self.mesh = self.mesh.apply_transform(trimesh.transformations.rotation_matrix(
+            np.radians(90), [0, 0, 1]
+        ))
+
         self.original_vertices = self.mesh.vertices.copy()
         
         print(f"  Vertices: {len(self.mesh.vertices):,}")
