@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cage Deformation Verification Viewer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: white;
+        }
+        
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+        
+        #info-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            min-width: 300px;
+            border: 2px solid #00ffff;
+        }
+        
+        #info-panel h2 {
+            margin: 0 0 10px 0;
+            color: #00ffff;
+            font-size: 18px;
+        }
+        
+        .status-connected {
+            color: #00ff00;
+            font-weight: bold;
+        }
+        
+        .status-disconnected {
+            color: #ff0000;
+            font-weight: bold;
+        }
+        
+        .metric {
+            margin: 5px 0;
+            padding: 5px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+        
+        .metric-label {
+            color: #aaa;
+            font-size: 12px;
+        }
+        
+        .metric-value {
+            color: #fff;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        
+        .warning {
+            color: #ffaa00;
+            font-weight: bold;
+        }
+        
+        .good {
+            color: #00ff00;
+            font-weight: bold;
+        }
+        
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #00ffff;
+        }
+        
+        .control-button {
+            background: rgba(0, 255, 255, 0.2);
+            border: 1px solid #00ffff;
+            color: white;
+            padding: 8px 12px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .control-button:hover {
+            background: rgba(0, 255, 255, 0.4);
+        }
+        
+        .control-button.active {
+            background: rgba(0, 255, 255, 0.6);
+            border-color: #ffffff;
+        }
+        
+        #analysis-panel {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 15px;
+            border-radius: 8px;
+            min-width: 400px;
+            max-width: 600px;
+            border: 2px solid #ffaa00;
+        }
+        
+        #analysis-panel h3 {
+            margin: 0 0 10px 0;
+            color: #ffaa00;
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+    
+    <!-- Info Panel -->
+    <div id="info-panel">
+        <h2>🔍 Verification Viewer</h2>
+        <div class="metric">
+            <span class="metric-label">Status:</span>
+            <span class="metric-value" id="status" class="status-disconnected">Disconnected</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">FPS:</span>
+            <span class="metric-value" id="fps">0.0</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Mesh Vertices:</span>
+            <span class="metric-value" id="mesh-verts">0</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Cage Vertices:</span>
+            <span class="metric-value" id="cage-verts">0</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Cage Quality:</span>
+            <span class="metric-value" id="cage-quality">Unknown</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Messages:</span>
+            <span class="metric-value" id="message-count">0</span>
+        </div>
+    </div>
+    
+    <!-- Controls -->
+    <div id="controls">
+        <div style="margin-bottom: 10px; font-weight: bold; color: #00ffff;">Controls</div>
+        <button class="control-button active" id="toggle-mesh">Show Mesh</button>
+        <button class="control-button active" id="toggle-cage">Show Cage</button>
+        <button class="control-button" id="toggle-wireframe">Wireframe</button>
+        <button class="control-button" id="reset-camera">Reset Camera</button>
+    </div>
+    
+    <!-- Analysis Panel -->
+    <div id="analysis-panel" style="display: none;">
+        <h3>📊 Cage Analysis</h3>
+        <div id="analysis-content"></div>
+    </div>
+
+    <!-- Three.js -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <script>
+        // Global variables
+        let scene, camera, renderer, controls;
+        let mesh, meshGeometry, cageMesh, cageGeometry;
+        let ws;
+        let frameCount = 0;
+        let lastTime = Date.now();
+        let messageCount = 0;
+        
+        // State
+        let showMesh = true;
+        let showCage = true;
+        let wireframeMode = false;
+        
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a);
+            
+            // Camera
+            camera = new THREE.PerspectiveCamera(
+                75,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                1000
+            );
+            camera.position.z = 5;
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('container').appendChild(renderer.domElement);
+            
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.4);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+            
+            // Grid
+            const gridHelper = new THREE.GridHelper(10, 10);
+            scene.add(gridHelper);
+            
+            // Axes
+            const axesHelper = new THREE.AxesHelper(2);
+            scene.add(axesHelper);
+            
+            // Mesh
+            meshGeometry = new THREE.BufferGeometry();
+            const meshMaterial = new THREE.MeshPhongMaterial({
+                color: 0x00ff88,
+                side: THREE.DoubleSide,
+                flatShading: false,
+                transparent: true,
+                opacity: 0.8
+            });
+            mesh = new THREE.Mesh(meshGeometry, meshMaterial);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            scene.add(mesh);
+            
+            // Cage
+            cageGeometry = new THREE.BufferGeometry();
+            const cageMaterial = new THREE.MeshBasicMaterial({
+                color: 0xff00ff,
+                wireframe: true,
+                transparent: true,
+                opacity: 0.8
+            });
+            cageMesh = new THREE.Mesh(cageGeometry, cageMaterial);
+            scene.add(cageMesh);
+            
+            // Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            
+            // Event listeners
+            window.addEventListener('resize', onWindowResize);
+            
+            document.getElementById('toggle-mesh').addEventListener('click', () => {
+                showMesh = !showMesh;
+                mesh.visible = showMesh;
+                document.getElementById('toggle-mesh').classList.toggle('active', showMesh);
+            });
+            
+            document.getElementById('toggle-cage').addEventListener('click', () => {
+                showCage = !showCage;
+                cageMesh.visible = showCage;
+                document.getElementById('toggle-cage').classList.toggle('active', showCage);
+            });
+            
+            document.getElementById('toggle-wireframe').addEventListener('click', () => {
+                wireframeMode = !wireframeMode;
+                mesh.material.wireframe = wireframeMode;
+                document.getElementById('toggle-wireframe').classList.toggle('active', wireframeMode);
+            });
+            
+            document.getElementById('reset-camera').addEventListener('click', () => {
+                camera.position.set(0, 0, 5);
+                controls.reset();
+            });
+            
+            // WebSocket
+            connectWebSocket();
+        }
+        
+        function connectWebSocket() {
+            console.log('Connecting to WebSocket on port 8766...');
+            ws = new WebSocket('ws://localhost:8766');
+            
+            ws.onopen = () => {
+                console.log('✓ WebSocket connected');
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('status').className = 'status-connected';
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    messageCount++;
+                    document.getElementById('message-count').textContent = messageCount;
+                    
+                    if (data.type === 'mesh_update') {
+                        updateMesh(data.vertices, data.faces);
+                        
+                        if (data.has_cage && data.cage_vertices && data.cage_faces) {
+                            updateCage(data.cage_vertices, data.cage_faces);
+                        }
+                        
+                        analyzeCage(data);
+                    }
+                } catch (error) {
+                    console.error('Error processing message:', error);
+                }
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket closed');
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('status').className = 'status-disconnected';
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+        
+        function updateMesh(vertices, faces) {
+            if (!vertices || !faces) return;
+            
+            const verticesFlat = new Float32Array(vertices.flat());
+            const facesFlat = new Uint16Array(faces.flat());
+            
+            meshGeometry.setAttribute('position', new THREE.BufferAttribute(verticesFlat, 3));
+            meshGeometry.setIndex(new THREE.BufferAttribute(facesFlat, 1));
+            meshGeometry.computeVertexNormals();
+            
+            // Auto-scale and center
+            meshGeometry.computeBoundingBox();
+            const bbox = meshGeometry.boundingBox;
+            const size = bbox.max.clone().sub(bbox.min);
+            const maxSize = Math.max(size.x, size.y, size.z);
+            
+            if (maxSize < 0.1 || maxSize > 10) {
+                const scale = 2.0 / maxSize;
+                mesh.scale.setScalar(scale);
+            } else {
+                mesh.scale.setScalar(1.0);
+            }
+            
+            const center = bbox.min.clone().add(bbox.max).multiplyScalar(0.5);
+            mesh.position.copy(center.negate());
+            
+            document.getElementById('mesh-verts').textContent = vertices.length;
+        }
+        
+        function updateCage(vertices, faces) {
+            if (!vertices || !faces) return;
+            
+            const verticesFlat = new Float32Array(vertices.flat());
+            const facesFlat = new Uint16Array(faces.flat());
+            
+            cageGeometry.setAttribute('position', new THREE.BufferAttribute(verticesFlat, 3));
+            cageGeometry.setIndex(new THREE.BufferAttribute(facesFlat, 1));
+            cageGeometry.computeVertexNormals();
+            
+            // Match mesh transform
+            cageMesh.position.copy(mesh.position);
+            cageMesh.scale.copy(mesh.scale);
+            
+            cageMesh.visible = showCage;
+            
+            document.getElementById('cage-verts').textContent = vertices.length;
+        }
+        
+        function analyzeCage(data) {
+            const cageVerts = data.cage_vertices ? data.cage_vertices.length : 0;
+            const meshVerts = data.vertices ? data.vertices.length : 0;
+            
+            let quality = '';
+            let qualityClass = '';
+            
+            if (cageVerts === 0) {
+                quality = 'No cage';
+                qualityClass = 'warning';
+            } else if (cageVerts >= 30 && cageVerts <= 60) {
+                quality = '✓ GOOD (30-60 verts)';
+                qualityClass = 'good';
+            } else if (cageVerts <= 150) {
+                quality = '⚠ Acceptable';
+                qualityClass = 'warning';
+            } else {
+                quality = '✗ TOO MANY (' + cageVerts + ')';
+                qualityClass = 'warning';
+            }
+            
+            const qualityEl = document.getElementById('cage-quality');
+            qualityEl.textContent = quality;
+            qualityEl.className = 'metric-value ' + qualityClass;
+            
+            // Show analysis panel if cage is problematic
+            if (cageVerts > 150) {
+                showAnalysis(cageVerts, meshVerts);
+            }
+        }
+        
+        function showAnalysis(cageVerts, meshVerts) {
+            const panel = document.getElementById('analysis-panel');
+            const content = document.getElementById('analysis-content');
+            
+            let html = '<div class="metric">';
+            html += '<span class="warning">⚠ WARNING: Cage has ' + cageVerts + ' vertices</span><br>';
+            html += '<span style="font-size: 12px;">Expected: 30-60 vertices for anatomical structure</span><br>';
+            html += '<span style="font-size: 12px;">Ratio: 1 cage vertex per ' + Math.round(meshVerts / cageVerts) + ' mesh vertices</span><br>';
+            html += '</div>';
+            
+            html += '<div style="margin-top: 10px; font-size: 12px;">';
+            html += '<strong>Likely Issues:</strong><br>';
+            html += '• Cage is not anatomically structured<br>';
+            html += '• Cage is a dense convex hull<br>';
+            html += '• No clear body part sections<br>';
+            html += '<br>';
+            html += '<strong>See:</strong> docs/251025_steps_forward.md';
+            html += '</div>';
+            
+            content.innerHTML = html;
+            panel.style.display = 'block';
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            controls.update();
+            renderer.render(scene, camera);
+            
+            // Update FPS
+            frameCount++;
+            const now = Date.now();
+            if (now - lastTime >= 1000) {
+                const fps = frameCount / ((now - lastTime) / 1000);
+                document.getElementById('fps').textContent = fps.toFixed(1);
+                frameCount = 0;
+                lastTime = now;
+            }
+        }
+        
+        // Initialize
+        init();
+        animate();
+        
+        console.log('Verification Viewer Ready');
+        console.log('Waiting for data from verify_deformation.py...');
+    </script>
+</body>
+</html>
+
