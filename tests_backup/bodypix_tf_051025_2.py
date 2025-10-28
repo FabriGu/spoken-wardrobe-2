@@ -9,7 +9,7 @@ def main():
     # Load model once at startup (MobileNet 50 for speed)
     print("Downloading/loading BodyPix model...")
     bodypix_model = load_model(download_model(
-        BodyPixModelPaths.MOBILENET_FLOAT_50_STRIDE_16
+        BodyPixModelPaths.MOBILENET_FLOAT_75_STRIDE_16
     ))
     print("Model loaded successfully!")
 
@@ -89,6 +89,8 @@ def main():
             part_names=[
                 'left_upper_arm_front', 'left_upper_arm_back',
                 'left_lower_arm_front', 'left_lower_arm_back'
+                # also extract rest of left arm
+                'left_hand', 'left_forearm_front', 'left_forearm_back'
             ]
         )
         

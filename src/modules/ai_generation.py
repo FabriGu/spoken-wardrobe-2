@@ -84,8 +84,8 @@ class ClothingGenerator:
         
         # Build the prompt
         # Focus on how the clothing looks ON the person
-        prompt = f"""elegant fashion clothing made of {user_input},
-        worn by a person, haute couture style, detailed fabric texture,
+        prompt = f"""fashion clothing made of {user_input},
+        worn by a person, simple style with minimal details, detailed fabric texture,
         natural lighting, photorealistic, high quality, professional fashion photography"""
         
         # Negative prompt - what we DON'T want
@@ -189,13 +189,32 @@ class ClothingGenerator:
         print(f"\nPIL Image mode: {image_pil.mode}, size: {image_pil.size}")
         print(f"PIL Mask mode: {mask_pil.mode}, size: {mask_pil.size}")
         
-        # Resize to the model's expected input size
+        # Resize to multiple of 64 (SD requirement) while preserving aspect ratio
         original_size = image_pil.size
-        target_size = (512, 512)  # SD inpainting was trained on this size
+        width, height = original_size
         
-        print(f"\nResizing from {original_size} to {target_size}")
-        image_resized = image_pil.resize(target_size, Image.LANCZOS)
-        mask_resized = mask_pil.resize(target_size, Image.NEAREST)  # NEAREST for masks to keep sharp edges
+        # Target: resize to reasonable SD size while preserving aspect
+        # Common SD sizes: 512x512, 512x768, 768x512, 640x512, etc.
+        # Find closest multiples of 64 that preserve aspect ratio
+        aspect = width / height
+        
+        if aspect > 1:  # Wide image (like 1280x720)
+            # Use 768 width (good for SD, preserves horizontal space)
+            target_width = 768
+            target_height = int(target_width / aspect)
+            # Round to nearest 64
+            target_height = ((target_height + 31) // 64) * 64
+        else:  # Tall or square image
+            target_height = 768
+            target_width = int(target_height * aspect)
+            target_width = ((target_width + 31) // 64) * 64
+        
+        print(f"\nResizing from {original_size} to ({target_width}, {target_height})")
+        print(f"  Original aspect: {aspect:.3f}, New aspect: {target_width/target_height:.3f}")
+        
+        # Resize with high quality
+        image_resized = image_pil.resize((target_width, target_height), Image.LANCZOS)
+        mask_resized = mask_pil.resize((target_width, target_height), Image.NEAREST)
         
         # Save debug images to see exactly what SD receives
         image_resized.save("debug_image_to_sd.png")
@@ -261,10 +280,14 @@ class ClothingGenerator:
         # Resize back to original size
         inpainted_image = inpainted_image.resize(original_size, Image.LANCZOS)
         
+        # Also resize mask back to original size (CRITICAL FIX!)
+        mask_resized = mask_resized.resize(original_size, Image.NEAREST)
+        mask_resized_np = np.array(mask_resized)
+        
         gen_time = time.time() - start_time
         print(f"✓ Generation complete in {gen_time:.1f} seconds!")
         
-        return inpainted_image
+        return inpainted_image, mask_resized_np
 
     def extract_clothing_with_transparency(self, inpainted_image, mask):
         #convert image to numpy
@@ -325,14 +348,14 @@ class ClothingGenerator:
             # Create prompt
             prompt, negative_prompt = self.create_prompt(text)
             
-            # Generate with inpainting
-            inpainted_full = self.generate_clothing_inpainting(
+            # Generate with inpainting (returns tuple: image and resized mask)
+            inpainted_full, mask_resized = self.generate_clothing_inpainting(
                 frame, mask, prompt, negative_prompt, seed=100
             )
             
-            # Extract clothing with transparency
+            # Extract clothing with transparency using RESIZED mask
             clothing_png = self.extract_clothing_with_transparency(
-                inpainted_full, mask
+                inpainted_full, mask_resized
             )
             
             # Cache the result
@@ -347,6 +370,48 @@ class ClothingGenerator:
             traceback.print_exc()
             return None, None
     
+    def save_reference_data(self, reference_data, base_filename="generated"):
+        """
+        Save reference data for cage generation and deformation.
+        
+        This data is used to create the cage from the SAME image used for mesh generation,
+        ensuring consistency throughout the pipeline.
+        
+        PARAMETERS:
+        - reference_data: Dict containing:
+            - 'original_frame': Original camera frame (numpy array)
+            - 'bodypix_masks': Dict of body part masks {part_name: mask_array}
+            - 'selected_parts': List of body parts used for mesh generation
+            - 'mediapipe_keypoints_2d': Dict of 2D keypoints {name: (x, y)}
+            - 'mediapipe_keypoints_3d': Dict of 3D keypoints {name: (x, y, z)}
+            - 'frame_shape': (height, width)
+            - 'mesh_path': Path to generated mesh (optional)
+            - 'timestamp': Generation timestamp
+        - base_filename: Base name for files
+        
+        Saves:
+        - {base_filename}_reference.pkl - Reference data for cage generation
+        - {base_filename}_frame.png - Original frame for visualization
+        """
+        import pickle
+        
+        os.makedirs("generated_images", exist_ok=True)
+        
+        reference_path = os.path.join("generated_images", f"{base_filename}_reference.pkl")
+        frame_path = os.path.join("generated_images", f"{base_filename}_frame.png")
+        
+        # Save pickle
+        with open(reference_path, 'wb') as f:
+            pickle.dump(reference_data, f)
+        
+        # Save frame as PNG for visualization
+        if 'original_frame' in reference_data and reference_data['original_frame'] is not None:
+            cv2.imwrite(frame_path, reference_data['original_frame'])
+        
+        print(f"✓ Saved reference data: {reference_path}")
+        print(f"✓ Saved reference frame: {frame_path}")
+        
+        return reference_path, frame_path
     
     def save_images(self, inpainted_full, clothing_png, base_filename="generated"):
         """
@@ -478,15 +543,15 @@ def main():
     print("="*60)
     
     # Check for test files
-    if not os.path.exists('test_frame_0.png') or not os.path.exists('test_mask_0.png'):
+    if not os.path.exists('debug_image_to_sd.png') or not os.path.exists('debug_mask_to_sd.png'):
         print("\n⚠ Test files not found!")
         print("Please run Phase 3 first and save a frame + mask.")
         print("Then rerun this test.")
         return
     
     # Load test frame and mask
-    test_frame = cv2.imread('test_frame_0.png')
-    test_mask = cv2.imread('test_mask_0.png', cv2.IMREAD_GRAYSCALE)
+    test_frame = cv2.imread('debug_image_to_sd.png')
+    test_mask = cv2.imread('debug_mask_to_sd.png', cv2.IMREAD_GRAYSCALE)
     
     print("\n✓ Test files loaded!")
     print(f"Frame size: {test_frame.shape}")

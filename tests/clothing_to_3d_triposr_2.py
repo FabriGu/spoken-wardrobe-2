@@ -370,6 +370,20 @@ def detect_and_correct_orientation(mesh, z_scale_factor=1.0, apply_flip=True):
     else:
         logging.info("Skipping 180° flip (--no-flip enabled)")
     
+    # Step 1.6: Rotate to face forward (fix 90° left rotation)
+    # Add 90° rotation around Y-axis to face camera
+    logging.info("Applying 90° rotation around Y-axis (face forward)")
+    forward_transform = np.eye(4)
+    angle = np.pi / 2  # 90 degrees clockwise
+    c, s = np.cos(angle), np.sin(angle)
+    R_forward = np.array([
+        [c, 0, s],
+        [0, 1, 0],
+        [-s, 0, c]
+    ])
+    forward_transform[:3, :3] = R_forward
+    mesh_tri.apply_transform(forward_transform)
+    
     # Step 2: Apply Z-axis scaling to reduce "fatness"
     # *** THIS IS THE KEY PARAMETER TO ADJUST ***
     if z_scale_factor != 1.0:

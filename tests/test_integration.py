@@ -111,6 +111,7 @@ class IntegratedBodyPixSystem:
         
         # Store original cage for reference
         self.cage = None
+        self.cage_structure = None  # NEW: Store anatomical structure
         self.original_cage_vertices = None
         
         print("✓ System ready!")
@@ -272,9 +273,9 @@ class IntegratedBodyPixSystem:
         if not self.cage_initialized:
             return self.mesh.vertices
         
-        # Use keypoint mapper to deform cage
+        # Use keypoint mapper to deform cage WITH cage_structure for section-wise deformation
         deformed_cage_vertices = self.keypoint_mapper.simple_anatomical_mapping(
-            landmarks, self.cage, frame_shape
+            landmarks, self.cage, frame_shape, self.cage_structure  # Pass cage_structure
         )
         
         # Deform mesh using MVC
@@ -335,8 +336,8 @@ class IntegratedBodyPixSystem:
         
         print("\nInitializing cage from BodyPix segmentation...")
         
-        # Generate anatomical cage
-        self.cage = self.cage_generator.generate_anatomical_cage(
+        # Generate anatomical cage WITH structure
+        self.cage, self.cage_structure = self.cage_generator.generate_anatomical_cage(
             segmentation_data, frame_shape, subdivisions=3
         )
         
@@ -350,6 +351,7 @@ class IntegratedBodyPixSystem:
         self.cage_initialized = True
         print("✓ Cage system initialized")
         print(f"   Cage: {len(self.cage.vertices)} vertices, {len(self.cage.faces)} faces")
+        print(f"   Structure: {len(self.cage_structure)} body parts")
     
     def deform_mesh_from_segmentation(self, segmentation_data, frame_shape):
         """

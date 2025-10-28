@@ -37,7 +37,7 @@ class BodyPixCageGenerator:
     
     def generate_anatomical_cage(self, segmentation_data, frame_shape, subdivisions=3):
         """
-        Generate cage based on BodyPix segmentation data.
+        Generate cage based on BodyPix segmentation data WITH anatomical structure.
         
         Args:
             segmentation_data: Dict with body part masks from BodyPix
@@ -46,31 +46,57 @@ class BodyPixCageGenerator:
             
         Returns:
             cage_mesh: trimesh object of the generated cage
+            cage_structure: Dict mapping body parts to vertex indices and keypoints
         """
         height, width = frame_shape[:2]
         
         # Extract body part masks
         body_parts = segmentation_data['body_parts']
         
+        # Get mesh bounds for depth estimation
+        mesh_bounds = self.mesh.bounds
+        mesh_depth = abs(mesh_bounds[1][2] - mesh_bounds[0][2])  # Z extent
+        
         # Generate cage vertices for each body part
         cage_vertices = []
-        cage_labels = []  # Track which vertices belong to which body part
+        cage_structure = {}  # NEW: Track structure mapping
         
         for part_name, part_group in self.body_part_groups.items():
             if part_name in body_parts:
                 part_mask = body_parts[part_name]
                 
-                # Generate cage vertices for this body part
-                part_vertices = self.generate_part_cage_vertices(
-                    part_mask, part_name, subdivisions
+                # Generate 3D cage vertices for this body part
+                part_vertices_3d = self.generate_part_cage_vertices_3d(
+                    part_mask, 
+                    part_name, 
+                    subdivisions,
+                    mesh_bounds,
+                    mesh_depth,
+                    frame_shape
                 )
                 
-                cage_vertices.extend(part_vertices)
-                cage_labels.extend([part_name] * len(part_vertices))
+                if len(part_vertices_3d) > 0:
+                    # Store structure mapping
+                    start_idx = len(cage_vertices)
+                    cage_vertices.extend(part_vertices_3d)
+                    end_idx = len(cage_vertices)
+                    
+                    cage_structure[part_name] = {
+                        'vertex_indices': list(range(start_idx, end_idx)),
+                        'keypoints': self.get_keypoints_for_part(part_name)
+                    }
         
         if not cage_vertices:
             # Fallback to simple box cage
-            return self.generate_simple_box_cage(subdivisions)
+            cage_mesh = self.generate_simple_box_cage(subdivisions)
+            # Create minimal structure for fallback
+            cage_structure = {
+                'torso': {
+                    'vertex_indices': list(range(len(cage_mesh.vertices))),
+                    'keypoints': ['left_shoulder', 'right_shoulder', 'left_hip', 'right_hip']
+                }
+            }
+            return cage_mesh, cage_structure
         
         cage_vertices = np.array(cage_vertices)
         
@@ -83,10 +109,11 @@ class BodyPixCageGenerator:
             cage_faces = self.create_simple_faces(len(cage_vertices))
         
         self.cage = trimesh.Trimesh(vertices=cage_vertices, faces=cage_faces)
-        self.cage_labels = cage_labels
         
         print(f"Generated anatomical cage with {len(cage_vertices)} vertices")
-        return self.cage
+        print(f"Cage structure: {len(cage_structure)} body parts")
+        
+        return self.cage, cage_structure
     
     def generate_part_cage_vertices(self, part_mask, part_name, subdivisions):
         """
@@ -249,6 +276,92 @@ class BodyPixCageGenerator:
                 faces.append([i, i + 1, i + 2])
         
         return np.array(faces)
+    
+    def generate_part_cage_vertices_3d(self, part_mask, part_name, subdivisions,
+                                        mesh_bounds, mesh_depth, frame_shape):
+        """
+        Generate 3D cage vertices from 2D body part mask.
+        Extrapolates depth based on mesh bounds and body part type.
+        
+        Args:
+            part_mask: Binary mask of the body part
+            part_name: Name of the body part
+            subdivisions: Number of subdivisions
+            mesh_bounds: Bounding box of the mesh
+            mesh_depth: Depth extent of the mesh (Z-axis)
+            frame_shape: (height, width) of video frame
+            
+        Returns:
+            vertices_3d: List of 3D vertices for this body part
+        """
+        height, width = frame_shape[:2]
+        
+        # Ensure mask is 2D (convert RGB to grayscale if needed)
+        if len(part_mask.shape) == 3:
+            part_mask = part_mask[:, :, 0] if part_mask.shape[2] > 0 else part_mask.mean(axis=2)
+        
+        # Get 2D bounding box from mask
+        rows, cols = np.where(part_mask > 0)
+        if len(rows) == 0:
+            return []
+        
+        # 2D bounds in pixels
+        y_min, y_max = rows.min(), rows.max()
+        x_min, x_max = cols.min(), cols.max()
+        
+        # Normalize to [-1, 1] range centered at origin
+        x_center = (x_min + x_max) / 2 / width - 0.5
+        y_center = (y_min + y_max) / 2 / height - 0.5
+        x_extent = (x_max - x_min) / width
+        y_extent = (y_max - y_min) / height
+        
+        # Estimate depth based on body part type
+        # Torso is deepest, arms/legs are thinner
+        depth_ratios = {
+            'torso': 1.0,  # Full depth
+            'left_upper_arm': 0.4,
+            'right_upper_arm': 0.4,
+            'left_lower_arm': 0.3,
+            'right_lower_arm': 0.3,
+            'left_hand': 0.25,
+            'right_hand': 0.25,
+        }
+        depth_ratio = depth_ratios.get(part_name, 0.5)
+        z_extent = mesh_depth * depth_ratio if mesh_depth > 0 else 0.2
+        
+        # Create 3D bounding box vertices (8 vertices per part)
+        vertices_3d = []
+        for dx in [-x_extent/2, x_extent/2]:
+            for dy in [-y_extent/2, y_extent/2]:
+                for dz in [-z_extent/2, z_extent/2]:
+                    vertices_3d.append([
+                        x_center + dx,
+                        y_center + dy,
+                        dz
+                    ])
+        
+        return vertices_3d
+    
+    def get_keypoints_for_part(self, part_name):
+        """
+        Map body part name to relevant MediaPipe keypoints.
+        
+        Args:
+            part_name: Name of the body part
+            
+        Returns:
+            keypoint_names: List of MediaPipe keypoint names for this part
+        """
+        keypoint_map = {
+            'torso': ['left_shoulder', 'right_shoulder', 'left_hip', 'right_hip'],
+            'left_upper_arm': ['left_shoulder', 'left_elbow'],
+            'right_upper_arm': ['right_shoulder', 'right_elbow'],
+            'left_lower_arm': ['left_elbow', 'left_wrist'],
+            'right_lower_arm': ['right_elbow', 'right_wrist'],
+            'left_hand': ['left_wrist'],
+            'right_hand': ['right_wrist'],
+        }
+        return keypoint_map.get(part_name, [])
 
 
 class EnhancedMeanValueCoordinates:

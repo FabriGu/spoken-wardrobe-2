@@ -127,10 +127,83 @@ class KeypointToCageMapper:
         
         return cage_vertices
     
-    def simple_anatomical_mapping(self, mediapipe_landmarks, cage_mesh, frame_shape):
+    def simple_anatomical_mapping(self, mediapipe_landmarks, cage_mesh, frame_shape, cage_structure=None):
         """
-        Simplified version that doesn't require depth map.
-        Uses only 2D keypoint positions and estimates depth.
+        Map MediaPipe keypoints to cage vertices with section-wise deformation.
+        If cage_structure is provided, applies independent transformations per body part.
+        Otherwise, falls back to uniform transformation.
+        
+        Args:
+            mediapipe_landmarks: MediaPipe pose landmarks
+            cage_mesh: Original cage mesh
+            frame_shape: (height, width) of the video frame
+            cage_structure: Dict mapping body parts to vertex indices and keypoints (optional)
+            
+        Returns:
+            deformed_cage_vertices: New positions for cage vertices
+        """
+        height, width = frame_shape[:2]
+        cage_vertices = np.array(cage_mesh.vertices).copy()
+        
+        # If no structure provided, fall back to old behavior
+        if cage_structure is None:
+            return self.simple_anatomical_mapping_old(mediapipe_landmarks, cage_mesh, frame_shape)
+        
+        # Extract MediaPipe keypoints to dict with normalized coordinates
+        keypoints_2d = {}
+        for landmark_name, landmark_idx in self.MEDIAPIPE_LANDMARKS.items():
+            if landmark_idx < len(mediapipe_landmarks.landmark):
+                lm = mediapipe_landmarks.landmark[landmark_idx]
+                # Convert to coordinates centered at origin
+                x = (lm.x - 0.5) * width
+                y = (lm.y - 0.5) * height
+                z = lm.z * 1000  # MediaPipe Z (relative depth)
+                keypoints_2d[landmark_name] = np.array([x, y, z])
+        
+        # For each body part section, compute independent transformation
+        for part_name, part_info in cage_structure.items():
+            vertex_indices = part_info['vertex_indices']
+            keypoint_names = part_info['keypoints']
+            
+            # Skip if no vertices in this section
+            if len(vertex_indices) == 0:
+                continue
+            
+            # Get keypoints for this section
+            part_keypoints = [keypoints_2d.get(kp) for kp in keypoint_names]
+            part_keypoints = [kp for kp in part_keypoints if kp is not None]
+            
+            if len(part_keypoints) < 2:
+                # Not enough keypoints, keep section stable
+                continue
+            
+            # Get original section vertices
+            section_verts_original = cage_vertices[vertex_indices]
+            section_center_original = section_verts_original.mean(axis=0)
+            
+            # Compute current section center from keypoints
+            section_center_current = np.mean(part_keypoints, axis=0)
+            
+            # Compute translation
+            translation = section_center_current - section_center_original
+            
+            # Apply transformation to this section only
+            for idx in vertex_indices:
+                cage_vertices[idx] += translation
+        
+        # Smooth temporally
+        if self.previous_cage_positions is not None:
+            alpha = 0.3  # Smoothing factor
+            cage_vertices = alpha * cage_vertices + (1 - alpha) * self.previous_cage_positions
+        
+        self.previous_cage_positions = cage_vertices.copy()
+        
+        return cage_vertices
+    
+    def simple_anatomical_mapping_old(self, mediapipe_landmarks, cage_mesh, frame_shape):
+        """
+        OLD VERSION: Fallback for when no cage structure is provided.
+        Uses uniform transformation for entire cage.
         
         Args:
             mediapipe_landmarks: MediaPipe pose landmarks

@@ -78,6 +78,7 @@ class DeformationVerificationSystem:
         self.keypoint_mapper = KeypointToCageMapper()
         self.mvc = None
         self.cage = None
+        self.cage_structure = None  # NEW
         self.original_cage_vertices = None
         
         # State
@@ -147,12 +148,13 @@ class DeformationVerificationSystem:
         
         print("Initializing cage from BodyPix...")
         
-        self.cage = self.cage_generator.generate_anatomical_cage(
+        self.cage, self.cage_structure = self.cage_generator.generate_anatomical_cage(
             segmentation_data, frame_shape, subdivisions=3
         )
         self.original_cage_vertices = self.cage.vertices.copy()
         
         print(f"✓ Cage: {len(self.cage.vertices)} vertices, {len(self.cage.faces)} faces")
+        print(f"✓ Structure: {len(self.cage_structure)} body parts")
         
         # Compute MVC weights
         print("Computing MVC weights...")
@@ -233,7 +235,7 @@ class DeformationVerificationSystem:
                 if keypoints and landmarks and self.cage_initialized:
                     # Deform cage
                     deformed_cage_vertices = self.keypoint_mapper.simple_anatomical_mapping(
-                        landmarks, self.cage, frame.shape
+                        landmarks, self.cage, frame.shape, self.cage_structure
                     )
                     
                     # Analyze cage motion

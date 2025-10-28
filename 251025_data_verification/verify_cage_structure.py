@@ -205,11 +205,15 @@ def test_with_simple_mesh():
     # Generate cage
     print(f"\nGenerating cage...")
     cage_generator = BodyPixCageGenerator(mesh)
-    cage = cage_generator.generate_anatomical_cage(
+    cage, cage_structure = cage_generator.generate_anatomical_cage(
         segmentation_data, 
         frame.shape,
         subdivisions=3
     )
+    
+    print(f"\n📋 Cage Structure:")
+    for part_name, part_info in cage_structure.items():
+        print(f"   {part_name}: {len(part_info['vertex_indices'])} vertices, keypoints: {part_info['keypoints']}")
     
     # Analyze cage
     analyze_cage_structure(cage, mesh)
@@ -277,11 +281,15 @@ def test_with_actual_mesh():
     # Generate cage
     print(f"\nGenerating cage...")
     cage_generator = BodyPixCageGenerator(mesh)
-    cage = cage_generator.generate_anatomical_cage(
+    cage, cage_structure = cage_generator.generate_anatomical_cage(
         segmentation_data,
         frame.shape,
         subdivisions=3
     )
+    
+    print(f"\n📋 Cage Structure:")
+    for part_name, part_info in cage_structure.items():
+        print(f"   {part_name}: {len(part_info['vertex_indices'])} vertices, keypoints: {part_info['keypoints']}")
     
     # Analyze cage
     analyze_cage_structure(cage, mesh)

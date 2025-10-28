@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Mesh Viewer V2</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #ffffff;
+        }
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+        }
+        #overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            max-width: 350px;
+            z-index: 100;
+        }
+        #status {
+            color: #4CAF50;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        #debug-info {
+            margin-top: 10px;
+            font-size: 12px;
+            font-family: 'Courier New', monospace;
+        }
+        .debug-section {
+            margin: 8px 0;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+        .debug-label {
+            color: #00bcd4;
+            font-weight: bold;
+        }
+        .debug-value {
+            color: #ffffff;
+        }
+        .warning {
+            color: #ff9800;
+        }
+        .error {
+            color: #f44336;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            z-index: 100;
+        }
+        button {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #1976D2;
+        }
+        button.active {
+            background: #4CAF50;
+        }
+        #help {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            max-width: 250px;
+            z-index: 100;
+        }
+        .help-title {
+            font-weight: bold;
+            color: #00bcd4;
+            margin-bottom: 8px;
+        }
+        .help-item {
+            margin: 4px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="canvas-container"></div>
+        
+        <div id="overlay">
+            <div id="status">Connecting to server...</div>
+            <div id="stats">
+                <div>Frames: <span id="frame-count">0</span></div>
+                <div>FPS: <span id="fps">0.0</span></div>
+                <div>Vertices: <span id="vertex-count">0</span></div>
+                <div>Faces: <span id="face-count">0</span></div>
+            </div>
+            <div id="debug-info">
+                <div class="debug-section">
+                    <div class="debug-label">Mesh:</div>
+                    <div class="debug-value">
+                        Position: <span id="mesh-position">-</span><br>
+                        Size: <span id="mesh-size">-</span><br>
+                        Bounds: <span id="mesh-bounds">-</span>
+                    </div>
+                </div>
+                <div class="debug-section">
+                    <div class="debug-label">Camera:</div>
+                    <div class="debug-value">
+                        Position: <span id="camera-position">-</span><br>
+                        Distance: <span id="camera-distance">-</span>
+                    </div>
+                </div>
+                <div class="debug-section">
+                    <div class="debug-label">Status:</div>
+                    <div class="debug-value">
+                        Visibility: <span id="visibility-status">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="controls">
+            <button id="toggle-cage" class="active">Show Cage</button>
+            <button id="toggle-wireframe">Toggle Wireframe</button>
+            <button id="reset-camera">Reset Camera</button>
+        </div>
+        
+        <div id="help">
+            <div class="help-title">Controls:</div>
+            <div class="help-item">🖱️ <strong>Mouse drag</strong>: Orbit</div>
+            <div class="help-item">🖱️ <strong>Scroll</strong>: Zoom</div>
+            <div class="help-item">⌨️ <strong>W/A/S/D</strong>: Move camera</div>
+            <div class="help-item">⌨️ <strong>Q/E</strong>: Move up/down</div>
+            <div class="help-item">⌨️ <strong>R</strong>: Reset camera</div>
+        </div>
+    </div>
+
+    <!-- Three.js from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        // ====================================================================
+        // Global Variables
+        // ====================================================================
+        
+        let scene, camera, renderer, controls;
+        let mesh, meshGeometry, meshMaterial;
+        let cage, cageGeometry, cageMaterial;
+        let gridHelper, axesHelper;
+        
+        let ws;
+        let wsConnected = false;
+        let frameCount = 0;
+        let lastFrameTime = Date.now();
+        let fps = 0;
+        
+        let showCage = true;
+        let showWireframe = false;
+        
+        // Camera movement
+        let moveSpeed = 0.1;
+        let keys = {
+            w: false, a: false, s: false, d: false,
+            q: false, e: false
+        };
+
+        // ====================================================================
+        // Initialization
+        // ====================================================================
+        
+        function init() {
+            const container = document.getElementById('canvas-container');
+            
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a);
+            
+            // Camera
+            camera = new THREE.PerspectiveCamera(
+                75,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                1000
+            );
+            camera.position.set(0, 0, 5);
+            camera.lookAt(0, 0, 0);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+            
+            // Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.minDistance = 0.5;
+            controls.maxDistance = 50;
+            
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+            
+            const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+            directionalLight2.position.set(-5, -5, -5);
+            scene.add(directionalLight2);
+            
+            // Grid helper
+            gridHelper = new THREE.GridHelper(10, 10, 0x444444, 0x222222);
+            scene.add(gridHelper);
+            
+            // Axes helper
+            axesHelper = new THREE.AxesHelper(2);
+            scene.add(axesHelper);
+            
+            // Mesh
+            meshGeometry = new THREE.BufferGeometry();
+            meshMaterial = new THREE.MeshPhongMaterial({
+                color: 0x00aaff,
+                side: THREE.DoubleSide,
+                flatShading: false
+            });
+            mesh = new THREE.Mesh(meshGeometry, meshMaterial);
+            scene.add(mesh);
+            
+            // Cage
+            cageGeometry = new THREE.BufferGeometry();
+            cageMaterial = new THREE.LineSegments(
+                cageGeometry,
+                new THREE.LineBasicMaterial({
+                    color: 0xff00ff,
+                    linewidth: 2
+                })
+            );
+            cage = cageMaterial;
+            cage.visible = showCage;
+            scene.add(cage);
+            
+            // Event listeners
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('keydown', onKeyDown);
+            window.addEventListener('keyup', onKeyUp);
+            
+            document.getElementById('toggle-cage').addEventListener('click', () => {
+                showCage = !showCage;
+                cage.visible = showCage;
+                document.getElementById('toggle-cage').classList.toggle('active');
+            });
+            
+            document.getElementById('toggle-wireframe').addEventListener('click', () => {
+                showWireframe = !showWireframe;
+                meshMaterial.wireframe = showWireframe;
+                document.getElementById('toggle-wireframe').classList.toggle('active');
+            });
+            
+            document.getElementById('reset-camera').addEventListener('click', resetCamera);
+            
+            console.log('✓ Three.js initialized');
+        }
+        
+        function resetCamera() {
+            camera.position.set(0, 0, 5);
+            camera.lookAt(0, 0, 0);
+            controls.target.set(0, 0, 0);
+            controls.update();
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        function onKeyDown(e) {
+            const key = e.key.toLowerCase();
+            if (key in keys) keys[key] = true;
+            if (key === 'r') resetCamera();
+        }
+        
+        function onKeyUp(e) {
+            const key = e.key.toLowerCase();
+            if (key in keys) keys[key] = false;
+        }
+        
+        // ====================================================================
+        // Camera Movement
+        // ====================================================================
+        
+        function updateCameraMovement() {
+            const moveVector = new THREE.Vector3();
+            
+            if (keys.w) moveVector.z -= moveSpeed;
+            if (keys.s) moveVector.z += moveSpeed;
+            if (keys.a) moveVector.x -= moveSpeed;
+            if (keys.d) moveVector.x += moveSpeed;
+            if (keys.q) moveVector.y -= moveSpeed;
+            if (keys.e) moveVector.y += moveSpeed;
+            
+            if (moveVector.length() > 0) {
+                // Apply camera rotation to movement
+                moveVector.applyQuaternion(camera.quaternion);
+                camera.position.add(moveVector);
+                controls.target.add(moveVector);
+            }
+        }
+        
+        // ====================================================================
+        // WebSocket Communication
+        // ====================================================================
+        
+        function connectWebSocket() {
+            console.log('Connecting to WebSocket server...');
+            
+            ws = new WebSocket('ws://localhost:8765');
+            
+            ws.onopen = function() {
+                console.log('✓ WebSocket connected');
+                wsConnected = true;
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('status').style.color = '#4CAF50';
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'mesh_update') {
+                        updateMesh(data);
+                        frameCount++;
+                        
+                        // Update FPS
+                        const now = Date.now();
+                        const elapsed = (now - lastFrameTime) / 1000;
+                        if (elapsed >= 1.0) {
+                            fps = frameCount / elapsed;
+                            frameCount = 0;
+                            lastFrameTime = now;
+                            document.getElementById('fps').textContent = fps.toFixed(1);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error parsing WebSocket message:', e);
+                }
+            };
+            
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                document.getElementById('status').textContent = 'Connection error';
+                document.getElementById('status').style.color = '#f44336';
+            };
+            
+            ws.onclose = function() {
+                console.log('WebSocket disconnected');
+                wsConnected = false;
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('status').style.color = '#ff9800';
+                
+                // Attempt reconnect after 2 seconds
+                if (wsConnected === false) {
+                    setTimeout(connectWebSocket, 2000);
+                }
+            };
+        }
+        
+        // ====================================================================
+        // Mesh Update
+        // ====================================================================
+        
+        function updateMesh(data) {
+            // Update mesh
+            if (data.vertices && data.faces) {
+                const vertices = new Float32Array(data.vertices.flat());
+                const indices = new Uint32Array(data.faces.flat());
+                
+                // Create geometry
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+                geometry.computeVertexNormals();
+                
+                // Update stats
+                document.getElementById('vertex-count').textContent = data.vertex_count;
+                document.getElementById('face-count').textContent = data.face_count;
+                
+                // Update mesh geometry
+                meshGeometry.dispose();
+                meshGeometry = geometry;
+                mesh.geometry = meshGeometry;
+                
+                document.getElementById('frame-count').textContent = frameCount;
+                
+                // Update debug info with simplified geometry
+                updateDebugInfo(meshGeometry.attributes.position.array);
+            }
+            
+            // Update cage
+            if (data.metadata && data.metadata.has_cage && data.cage_vertices && data.cage_faces) {
+                updateCage(data.cage_vertices, data.cage_faces);
+            }
+        }
+        
+        function updateCage(cageVertices, cageFaces) {
+            const vertices = new Float32Array(cageVertices.flat());
+            const indices = new Uint32Array(cageFaces.flat());
+            
+            // Create wireframe edges
+            const edges = new THREE.EdgesGeometry(
+                new THREE.BufferGeometry()
+                    .setAttribute('position', new THREE.BufferAttribute(vertices, 3))
+                    .setIndex(new THREE.BufferAttribute(indices, 1))
+            );
+            
+            // Update cage geometry
+            cage.geometry.dispose();
+            cage.geometry = edges;
+        }
+        
+        function updateDebugInfo(vertices) {
+            // Compute mesh bounds
+            const positions = [];
+            for (let i = 0; i < vertices.length; i += 3) {
+                positions.push(new THREE.Vector3(vertices[i], vertices[i+1], vertices[i+2]));
+            }
+            
+            const box = new THREE.Box3().setFromPoints(positions);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            
+            // Update display
+            document.getElementById('mesh-position').textContent = 
+                `(${center.x.toFixed(3)}, ${center.y.toFixed(3)}, ${center.z.toFixed(3)})`;
+            document.getElementById('mesh-size').textContent = 
+                `(${size.x.toFixed(3)}, ${size.y.toFixed(3)}, ${size.z.toFixed(3)})`;
+            document.getElementById('mesh-bounds').textContent = 
+                `X[${box.min.x.toFixed(3)}, ${box.max.x.toFixed(3)}]`;
+            
+            document.getElementById('camera-position').textContent = 
+                `(${camera.position.x.toFixed(3)}, ${camera.position.y.toFixed(3)}, ${camera.position.z.toFixed(3)})`;
+            document.getElementById('camera-distance').textContent = 
+                camera.position.distanceTo(center).toFixed(3);
+            
+            // Visibility check
+            const frustum = new THREE.Frustum();
+            const cameraViewProjectionMatrix = new THREE.Matrix4();
+            cameraViewProjectionMatrix.multiplyMatrices(
+                camera.projectionMatrix,
+                camera.matrixWorldInverse
+            );
+            frustum.setFromProjectionMatrix(cameraViewProjectionMatrix);
+            
+            const isVisible = frustum.intersectsBox(box);
+            const statusEl = document.getElementById('visibility-status');
+            if (isVisible) {
+                statusEl.textContent = '✓ VISIBLE';
+                statusEl.className = 'debug-value';
+            } else {
+                statusEl.textContent = '⚠ OFFSCREEN';
+                statusEl.className = 'debug-value warning';
+            }
+        }
+        
+        // ====================================================================
+        // Animation Loop
+        // ====================================================================
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            updateCameraMovement();
+            controls.update();
+            
+            renderer.render(scene, camera);
+        }
+        
+        // ====================================================================
+        // Start
+        // ====================================================================
+        
+        init();
+        connectWebSocket();
+        animate();
+        
+        console.log('✓ Viewer initialized and running');
+    </script>
+</body>
+</html>
+
