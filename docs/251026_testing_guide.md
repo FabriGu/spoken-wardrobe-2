@@ -312,7 +312,7 @@ For each test, note:
 
    - Total vertices: \_\_\_\_
    - Number of body parts: \_\_\_\_
-   - Body parts detected: ******\_\_\_\_******
+   - Body parts detected: **\*\***\_\_\_\_**\*\***
 
 2. **Performance**:
 
