@@ -15,6 +15,8 @@ def main():
 
     # Initialize camera using same pattern as your working code
     print("Opening camera...")
+ 
+
     cap = cv2.VideoCapture(0)
     
     if not cap.isOpened():

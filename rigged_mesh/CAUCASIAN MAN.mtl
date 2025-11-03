@@ -1,0 +1,82 @@
+# Blender 3.3.10 MTL File: 'CAUCASIAN MAN.blend'
+# www.blender.org
+
+newmtl Eye_brown
+Ns 810.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/Users/Riswan/3D Objects/HUMAN/CAUCASIAN/MAN/textures/brown_eye.png
+
+newmtl Shoes02
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/Users/Riswan/3D Objects/HUMAN/CAUCASIAN/MAN/textures/shoes02_diffuse.png
+
+newmtl eyebrow001
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+illum 1
+map_Kd C:/Users/Riswan/3D Objects/HUMAN/CAUCASIAN/MAN/textures/eyebrow001.png
+map_d C:/Users/Riswan/3D Objects/HUMAN/CAUCASIAN/MAN/textures/eyebrow001.png
+
+newmtl male_casualsuit02
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/Users/Riswan/3D Objects/HUMAN/CAUCASIAN/MAN/textures/male_casualsuit02_diffuse.png
+
+newmtl middleage_cauasian_male
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/Users/Riswan/3D Objects/HUMAN/CAUCASIAN/MAN/textures/middleage_lightskinned_male_diffuse.png
+
+newmtl short04
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+illum 2
+map_Kd C:/Users/Riswan/3D Objects/HUMAN/CAUCASIAN/MAN/textures/short04_diffuse.png
+map_d C:/Users/Riswan/3D Objects/HUMAN/CAUCASIAN/MAN/textures/short04_diffuse.png
+
+newmtl teethMaterial
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/Users/Riswan/3D Objects/HUMAN/CAUCASIAN/MAN/textures/teeth.png
+
+newmtl tongue01Material
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/Users/Riswan/3D Objects/HUMAN/CAUCASIAN/MAN/textures/tongue01_diffuse.png

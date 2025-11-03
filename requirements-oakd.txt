@@ -1,0 +1,10 @@
+# OAK-D Pro and DepthAI dependencies
+depthai==2.24.0.0
+opencv-contrib-python==4.8.1.78
+open3d==0.18.0
+blobconverter==1.4.2
+
+# Already in requirements.txt but needed for blazepose
+# numpy==1.24.3
+# opencv-python==4.8.1.78
+# mediapipe==0.10.8
