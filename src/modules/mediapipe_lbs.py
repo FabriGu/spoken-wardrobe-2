@@ -1,32 +1,45 @@
 """
-MediaPipe Linear Blend Skinning - Proper LBS with Bind Pose
+MediaPipe Linear Blend Skinning - Option C: Pre-computed Inverse Bind Matrices
 
 This module implements proper skeletal deformation by:
 1. Computing bone transformation matrices from MediaPipe keypoints
-2. Remapping GLB skin weights to MediaPipe bones
-3. Applying LBS with proper bind pose handling
+2. Remapping GLB skin weights from 163 bones to 9 MediaPipe bones
+3. Pre-computing inverse bind matrices during T-pose calibration (Option C)
+4. Applying LBS using stored inverse bind matrices
 
-KEY FIX (Nov 2025):
-===================
-Previous implementation applied transformations in world space without inverse bind pose,
-causing mesh explosion. The fix:
+OPTION C IMPLEMENTATION (Nov 2025):
+====================================
+Problem: GLB has 163 bones with inverse bind matrices designed for those specific
+bone coordinate systems. When we remap to 9 MediaPipe bones with DIFFERENT
+coordinate systems, the original inverse bind matrices no longer match.
 
-1. Compute bone matrices M_bind from reference (T-pose) keypoints
-2. Compute bone matrices M_current from current keypoints
-3. Compute skinning matrices: M_skin = M_current * M_bind^-1
-4. Apply LBS: v' = sum_i( w_i * M_skin_i * v )
+Solution: Compute OUR OWN inverse bind matrices for the 9 MediaPipe bones during
+T-pose calibration, rather than trying to use the GLB's 163-bone matrices.
 
-This ensures rotations happen in bone-local space, not world space.
+Implementation:
+1. During T-pose calibration: call set_bind_pose(vertices, keypoints)
+   - Computes bone transformation matrices M_bind from T-pose keypoints
+   - Inverts to get M_bind_inv for each of the 9 MediaPipe bones
+   - Stores these matrices for use during animation
+
+2. During animation: deform(vertices, ref_kp, curr_kp)
+   - Computes current bone matrices M_current from current keypoints
+   - Uses STORED M_bind_inv (not recomputed!)
+   - Applies: M_skin[i] = M_current[i] * M_bind_inv[i]
+   - Deforms vertices: v' = sum_i( w_i * M_skin[i] * v )
 
 Standard LBS Formula:
-  v_deformed = sum_over_bones( weight[i] * M_current[i] * M_bind_inv[i] * v )
+  v' = sum_i( weight[i] * M_current[i] * M_bind_inv[i] * v )
 
 where:
-  - M_bind_inv[i] transforms vertex from mesh space to bone-i's local space (in T-pose)
-  - M_current[i] transforms from bone-i's local space to world space (current pose)
-  - weight[i] is the skinning weight for bone i
+  - M_bind_inv[i] = stored inverse bind matrix for MediaPipe bone i (from T-pose)
+  - M_current[i] = current transformation matrix for bone i (from current pose)
+  - weight[i] = remapped skinning weight for bone i
 
-Reference: https://graphics.stanford.edu/courses/cs248-16-spring/lectures/skinning.pdf
+Critical: The inverse bind matrices are computed ONCE during T-pose calibration
+and remain constant. Only M_current changes during animation.
+
+Reference: https://cseweb.ucsd.edu/classes/sp16/cse169-a/readings/3-Skin.html
 """
 
 import numpy as np
@@ -62,7 +75,7 @@ MEDIAPIPE_BONE_ORDER = [
 
 
 class MediaPipeLBS:
-    """Linear Blend Skinning using MediaPipe keypoints and gpytoolbox"""
+    """Linear Blend Skinning using MediaPipe keypoints with proper bind pose"""
 
     def __init__(self, mesh, bone_name_mapping: Dict[str, str]):
         """
@@ -92,10 +105,16 @@ class MediaPipeLBS:
         # Remap weights from GLB's 163 bones to our 9 MediaPipe bones
         self.remapped_weights = self._remap_weights()
 
+        # Inverse bind matrices (computed during T-pose calibration)
+        # Shape: (n_bones, 4, 4)
+        self.inverse_bind_matrices = None
+        self.is_calibrated = False
+
         print(f"✓ MediaPipeLBS initialized:")
         print(f"  Bones: {self.n_bones}")
         print(f"  Vertices: {self.n_vertices}")
         print(f"  Mapped GLB bones: {len(self.glb_to_mediapipe_idx)}")
+        print(f"  ⚠️  Call set_bind_pose() with T-pose keypoints before deforming!")
 
     def _remap_weights(self) -> np.ndarray:
         """
@@ -139,6 +158,35 @@ class MediaPipeLBS:
             print(f"  Warning: {no_influence} vertices have no mapped bone weights (won't deform)")
 
         return new_weights
+
+    def set_bind_pose(self, base_vertices: np.ndarray, reference_keypoints: Dict[str, np.ndarray]):
+        """
+        Compute and store inverse bind matrices from T-pose calibration
+
+        This is the KEY to Option C: we compute OUR OWN inverse bind matrices
+        for the 9 MediaPipe bones based on the T-pose, rather than trying to
+        use the GLB's 163-bone inverse bind matrices.
+
+        Args:
+            base_vertices: (n, 3) rest pose vertices (T-pose)
+            reference_keypoints: T-pose keypoints (scaled and aligned)
+        """
+        # Compute bone transformation matrices in T-pose
+        M_bind = self.compute_bone_matrices(reference_keypoints)
+
+        # Invert to get inverse bind matrices
+        self.inverse_bind_matrices = np.zeros((self.n_bones, 4, 4), dtype=np.float32)
+
+        for bone_idx in range(self.n_bones):
+            try:
+                self.inverse_bind_matrices[bone_idx] = np.linalg.inv(M_bind[bone_idx])
+            except np.linalg.LinAlgError:
+                # Singular matrix, use identity
+                print(f"⚠️  Warning: Bone {MEDIAPIPE_BONE_ORDER[bone_idx]} has singular matrix, using identity")
+                self.inverse_bind_matrices[bone_idx] = np.eye(4)
+
+        self.is_calibrated = True
+        print(f"✓ Bind pose calibrated! Inverse bind matrices computed for {self.n_bones} bones")
 
     @staticmethod
     def compute_derived_keypoints(keypoints: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
@@ -318,20 +366,37 @@ class MediaPipeLBS:
                reference_keypoints: Dict[str, np.ndarray],
                current_keypoints: Dict[str, np.ndarray]) -> np.ndarray:
         """
-        Deform mesh vertices using LBS with proper bind pose handling
+        Deform mesh vertices using LBS with pre-computed inverse bind matrices
 
-        Formula: v' = sum_i( w_i * (M_i * M_bind_inv_i * v) )
+        Option C Implementation:
+        Uses inverse bind matrices computed during T-pose calibration,
+        rather than recomputing them every frame.
+
+        Formula: v' = sum_i( w_i * M_current_i * M_bind_inv_i * v )
 
         Args:
             base_vertices: (n, 3) rest pose vertices
-            reference_keypoints: T-pose keypoints (scaled and aligned)
+            reference_keypoints: T-pose keypoints (not used if calibrated)
             current_keypoints: Current pose keypoints (scaled and aligned)
 
         Returns:
             (n, 3) deformed vertices
         """
-        # Compute bind pose matrices (from reference T-pose)
-        M_bind = self.compute_bone_matrices(reference_keypoints)
+        # Check if calibrated
+        if not self.is_calibrated or self.inverse_bind_matrices is None:
+            print("⚠️  WARNING: LBS not calibrated! Call set_bind_pose() first.")
+            print("    Falling back to computing inverse bind matrices on-the-fly...")
+            # Fallback: compute on-the-fly (old behavior)
+            M_bind = self.compute_bone_matrices(reference_keypoints)
+            M_bind_inv = np.zeros((self.n_bones, 4, 4), dtype=np.float32)
+            for bone_idx in range(self.n_bones):
+                try:
+                    M_bind_inv[bone_idx] = np.linalg.inv(M_bind[bone_idx])
+                except np.linalg.LinAlgError:
+                    M_bind_inv[bone_idx] = np.eye(4)
+        else:
+            # Use pre-computed inverse bind matrices (Option C!)
+            M_bind_inv = self.inverse_bind_matrices
 
         # Compute current pose matrices
         M_current = self.compute_bone_matrices(current_keypoints)
@@ -340,12 +405,7 @@ class MediaPipeLBS:
         M_skin = np.zeros((self.n_bones, 4, 4), dtype=np.float32)
 
         for bone_idx in range(self.n_bones):
-            try:
-                M_bind_inv = np.linalg.inv(M_bind[bone_idx])
-                M_skin[bone_idx] = M_current[bone_idx] @ M_bind_inv
-            except np.linalg.LinAlgError:
-                # Singular matrix, use identity
-                M_skin[bone_idx] = np.eye(4)
+            M_skin[bone_idx] = M_current[bone_idx] @ M_bind_inv[bone_idx]
 
         # Apply LBS: for each vertex, blend transformed positions
         n_verts = len(base_vertices)

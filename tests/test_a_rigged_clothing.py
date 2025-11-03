@@ -365,9 +365,17 @@ class RiggedClothingTest:
                 # Set as reference
                 self.mediapipe_mapper.set_reference_pose(keypoints)
                 self.reference_keypoints = keypoints
+
+                # OPTION C: Compute and store inverse bind matrices
+                print("\n=== Computing Inverse Bind Matrices (Option C) ===")
+                if self.lbs_human is not None:
+                    self.lbs_human.set_bind_pose(self.human_vertices_base, keypoints)
+                if self.lbs_clothing is not None:
+                    self.lbs_clothing.set_bind_pose(self.clothing_vertices_base, keypoints)
+
                 self.is_calibrated = True
 
-                print("✓ T-pose calibrated!")
+                print("\n✓ T-pose calibrated!")
                 print(f"  Scale factor: {self.scale_factor:.3f}")
                 print(f"  Hip Y offset: {hip_y_offset:.3f}")
             else:
