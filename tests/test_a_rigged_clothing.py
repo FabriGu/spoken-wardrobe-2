@@ -89,7 +89,7 @@ class RiggedClothingTest:
         print("\n=== Loading Meshes ===")
 
         # Load rigged human (weight template)
-        human_path = "rigged_mesh/CAUCASIAN MAN.glb"
+        human_path = "rigged_mesh/meshRigged_0.glb"
         print(f"Loading human mesh: {human_path}")
         self.human_mesh = RiggedMeshLoader.load(human_path)
         print(f"✓ Human: {len(self.human_mesh.vertices)} verts, {len(self.human_mesh.bones)} bones")

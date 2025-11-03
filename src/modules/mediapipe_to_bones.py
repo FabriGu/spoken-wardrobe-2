@@ -70,23 +70,23 @@ BONE_MAPPING = {
 # This allows LBS to find the correct bones in the rigged mesh
 GLB_BONE_NAME_MAPPING = {
     # Spine - try multiple common names
-    'spine': ['spine01', 'spine02', 'spine03', 'spine04', 'spine05', 'Spine', 'spine'],
+    'spine': ['Spine', 'spine', 'spine01', 'spine02', 'spine03', 'spine04', 'spine05'],
 
-    # Left arm
-    'left_upper_arm': ['upperarm01_L', 'upperarm02_L', 'LeftUpperArm', 'upperArm_L'],
-    'left_lower_arm': ['lowerarm01_L', 'lowerarm02_L', 'LeftLowerArm', 'lowerArm_L'],
+    # Left arm - IMPORTANT: exact names from guide first!
+    'left_upper_arm': ['left_upper_arm', 'upperarm01_L', 'upperarm02_L', 'LeftUpperArm', 'upperArm_L'],
+    'left_lower_arm': ['left_lower_arm', 'lowerarm01_L', 'lowerarm02_L', 'LeftLowerArm', 'lowerArm_L'],
 
-    # Right arm
-    'right_upper_arm': ['upperarm01_R', 'upperarm02_R', 'RightUpperArm', 'upperArm_R'],
-    'right_lower_arm': ['lowerarm01_R', 'lowerarm02_R', 'RightLowerArm', 'lowerArm_R'],
+    # Right arm - IMPORTANT: exact names from guide first!
+    'right_upper_arm': ['right_upper_arm', 'upperarm01_R', 'upperarm02_R', 'RightUpperArm', 'upperArm_R'],
+    'right_lower_arm': ['right_lower_arm', 'lowerarm01_R', 'lowerarm02_R', 'RightLowerArm', 'lowerArm_R'],
 
-    # Left leg
-    'left_upper_leg': ['upperleg01_L', 'upperleg02_L', 'thigh01_L', 'thigh02_L', 'LeftUpperLeg', 'upperLeg_L'],
-    'left_lower_leg': ['lowerleg01_L', 'lowerleg02_L', 'calf01_L', 'calf02_L', 'shin_L', 'LeftLowerLeg', 'lowerLeg_L'],
+    # Left leg - IMPORTANT: exact names from guide first!
+    'left_upper_leg': ['left_upper_leg', 'upperleg01_L', 'upperleg02_L', 'thigh01_L', 'thigh02_L', 'LeftUpperLeg', 'upperLeg_L'],
+    'left_lower_leg': ['left_lower_leg', 'lowerleg01_L', 'lowerleg02_L', 'calf01_L', 'calf02_L', 'shin_L', 'LeftLowerLeg', 'lowerLeg_L'],
 
-    # Right leg
-    'right_upper_leg': ['upperleg01_R', 'upperleg02_R', 'thigh01_R', 'thigh02_R', 'RightUpperLeg', 'upperLeg_R'],
-    'right_lower_leg': ['lowerleg01_R', 'lowerleg02_R', 'calf01_R', 'calf02_R', 'shin_R', 'RightLowerLeg', 'lowerLeg_R'],
+    # Right leg - IMPORTANT: exact names from guide first!
+    'right_upper_leg': ['right_upper_leg', 'upperleg01_R', 'upperleg02_R', 'thigh01_R', 'thigh02_R', 'RightUpperLeg', 'upperLeg_R'],
+    'right_lower_leg': ['right_lower_leg', 'lowerleg01_R', 'lowerleg02_R', 'calf01_R', 'calf02_R', 'shin_R', 'RightLowerLeg', 'lowerLeg_R'],
 }
 
 
