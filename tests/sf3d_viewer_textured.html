@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SF3D Textured Mesh Viewer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #1a1a1a;
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #0ff;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            max-width: 350px;
+            border: 1px solid #0ff;
+        }
+
+        #info h2 {
+            margin: 0 0 15px 0;
+            color: #0ff;
+            font-size: 18px;
+        }
+
+        #stats {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #0f0;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-family: monospace;
+            border: 1px solid #0f0;
+        }
+
+        #file-input-wrapper {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #0ff;
+        }
+
+        #file-input {
+            color: #0ff;
+            font-size: 14px;
+        }
+
+        .status {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status.loaded {
+            background: #0f0;
+            box-shadow: 0 0 10px #0f0;
+        }
+
+        .status.loading {
+            background: #ff0;
+            box-shadow: 0 0 10px #ff0;
+            animation: pulse 1s infinite;
+        }
+
+        .status.error {
+            background: #f00;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #0ff;
+            font-size: 24px;
+            text-align: center;
+            display: none;
+        }
+
+        .spinner {
+            border: 4px solid rgba(0, 255, 255, 0.1);
+            border-top: 4px solid #0ff;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+
+    <div id="info">
+        <h2>🎨 SF3D Mesh Viewer</h2>
+        <div>
+            <span class="status" id="status"></span>
+            <span id="statusText">Ready - Load a GLB file</span>
+        </div>
+        <div style="margin-top: 15px; font-size: 12px;">
+            <strong>Controls:</strong><br>
+            • Left Mouse: Rotate<br>
+            • Right Mouse: Pan<br>
+            • Scroll: Zoom<br>
+            • R: Reset view<br>
+            • T: Toggle texture/wireframe<br>
+            • L: Toggle lighting
+        </div>
+    </div>
+
+    <div id="file-input-wrapper">
+        <label for="file-input" style="color: #0ff; cursor: pointer;">
+            📁 Load GLB File
+        </label>
+        <input type="file" id="file-input" accept=".glb" style="display: none;">
+    </div>
+
+    <div id="stats">
+        FPS: <span id="fps">0</span><br>
+        Vertices: <span id="vertices">0</span><br>
+        Faces: <span id="faces">0</span><br>
+        Textures: <span id="textures">0</span>
+    </div>
+
+    <div id="loading">
+        <div class="spinner"></div>
+        Loading mesh...
+    </div>
+
+    <!-- Three.js r128 + GLTFLoader -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        // === Three.js Setup ===
+        let scene, camera, renderer, controls;
+        let loadedMesh = null;
+        let wireframeMode = false;
+        let lightingEnabled = true;
+
+        // Lights
+        let ambientLight, directionalLight, hemisphereLight;
+
+        // Stats
+        let frameCount = 0;
+        let lastTime = Date.now();
+        let fps = 0;
+
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(
+                50,
+                window.innerWidth / window.innerHeight,
+                0.01,
+                100
+            );
+            camera.position.set(0, 0, 2.5);
+            camera.lookAt(0, 0, 0);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({
+                antialias: true,
+                alpha: false
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            document.getElementById('container').appendChild(renderer.domElement);
+
+            // Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.minDistance = 0.5;
+            controls.maxDistance = 10;
+            controls.target.set(0, 0, 0);
+
+            // Lighting
+            ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+
+            hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.4);
+            scene.add(hemisphereLight);
+
+            directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(1, 1, 1);
+            directionalLight.castShadow = false;
+            scene.add(directionalLight);
+
+            // Grid helper
+            const gridHelper = new THREE.GridHelper(2, 20, 0x444444, 0x222222);
+            scene.add(gridHelper);
+
+            // Axes helper (RGB = XYZ)
+            const axesHelper = new THREE.AxesHelper(0.5);
+            scene.add(axesHelper);
+
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize, false);
+
+            // Keyboard controls
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'r' || e.key === 'R') {
+                    resetCamera();
+                } else if (e.key === 't' || e.key === 'T') {
+                    toggleWireframe();
+                } else if (e.key === 'l' || e.key === 'L') {
+                    toggleLighting();
+                }
+            });
+
+            // File input
+            const fileInput = document.getElementById('file-input');
+            const wrapper = document.getElementById('file-input-wrapper');
+
+            wrapper.addEventListener('click', () => {
+                fileInput.click();
+            });
+
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    loadGLBFile(file);
+                }
+            });
+
+            // Drag and drop
+            document.body.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            });
+
+            document.body.addEventListener('drop', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const file = e.dataTransfer.files[0];
+                if (file && file.name.endsWith('.glb')) {
+                    loadGLBFile(file);
+                }
+            });
+
+            console.log('✓ Three.js initialized');
+        }
+
+        function resetCamera() {
+            camera.position.set(0, 0, 2.5);
+            controls.target.set(0, 0, 0);
+            controls.update();
+        }
+
+        function toggleWireframe() {
+            wireframeMode = !wireframeMode;
+            if (loadedMesh) {
+                loadedMesh.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        child.material.wireframe = wireframeMode;
+                    }
+                });
+            }
+            console.log(`Wireframe: ${wireframeMode ? 'ON' : 'OFF'}`);
+        }
+
+        function toggleLighting() {
+            lightingEnabled = !lightingEnabled;
+            ambientLight.intensity = lightingEnabled ? 0.5 : 1.0;
+            hemisphereLight.intensity = lightingEnabled ? 0.4 : 0;
+            directionalLight.intensity = lightingEnabled ? 0.8 : 0;
+            console.log(`Lighting: ${lightingEnabled ? 'ON' : 'OFF'}`);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function loadGLBFile(file) {
+            const status = document.getElementById('status');
+            const statusText = document.getElementById('statusText');
+            const loading = document.getElementById('loading');
+
+            status.className = 'status loading';
+            statusText.textContent = `Loading ${file.name}...`;
+            loading.style.display = 'block';
+
+            // Remove previous mesh
+            if (loadedMesh) {
+                scene.remove(loadedMesh);
+                // Dispose of materials and geometries
+                loadedMesh.traverse((child) => {
+                    if (child.isMesh) {
+                        if (child.geometry) child.geometry.dispose();
+                        if (child.material) {
+                            if (Array.isArray(child.material)) {
+                                child.material.forEach(mat => mat.dispose());
+                            } else {
+                                child.material.dispose();
+                            }
+                        }
+                    }
+                });
+                loadedMesh = null;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const arrayBuffer = e.target.result;
+                const loader = new THREE.GLTFLoader();
+
+                loader.parse(arrayBuffer, '', (gltf) => {
+                    loadedMesh = gltf.scene;
+
+                    // Center the mesh
+                    const box = new THREE.Box3().setFromObject(loadedMesh);
+                    const center = box.getCenter(new THREE.Vector3());
+                    const size = box.getSize(new THREE.Vector3());
+
+                    loadedMesh.position.sub(center);
+
+                    // Scale to fit in view
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    const scale = 1.5 / maxDim;
+                    loadedMesh.scale.multiplyScalar(scale);
+
+                    scene.add(loadedMesh);
+
+                    // Update stats
+                    let vertexCount = 0;
+                    let faceCount = 0;
+                    let textureCount = 0;
+                    const textures = new Set();
+
+                    loadedMesh.traverse((child) => {
+                        if (child.isMesh) {
+                            vertexCount += child.geometry.attributes.position.count;
+                            faceCount += child.geometry.index ? child.geometry.index.count / 3 : child.geometry.attributes.position.count / 3;
+
+                            if (child.material) {
+                                if (child.material.map) textures.add(child.material.map);
+                                if (child.material.normalMap) textures.add(child.material.normalMap);
+                                if (child.material.roughnessMap) textures.add(child.material.roughnessMap);
+                                if (child.material.metalnessMap) textures.add(child.material.metalnessMap);
+                            }
+                        }
+                    });
+
+                    textureCount = textures.size;
+
+                    document.getElementById('vertices').textContent = vertexCount.toLocaleString();
+                    document.getElementById('faces').textContent = Math.floor(faceCount).toLocaleString();
+                    document.getElementById('textures').textContent = textureCount;
+
+                    status.className = 'status loaded';
+                    statusText.textContent = `Loaded: ${file.name}`;
+                    loading.style.display = 'none';
+
+                    console.log('✓ GLB loaded successfully');
+                    console.log(`  Vertices: ${vertexCount}`);
+                    console.log(`  Faces: ${faceCount}`);
+                    console.log(`  Textures: ${textureCount}`);
+
+                }, (error) => {
+                    console.error('Error loading GLB:', error);
+                    status.className = 'status error';
+                    statusText.textContent = 'Error loading file';
+                    loading.style.display = 'none';
+                });
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function updateFPS() {
+            frameCount++;
+            const now = Date.now();
+            const elapsed = now - lastTime;
+
+            if (elapsed >= 1000) {
+                fps = Math.round(frameCount / (elapsed / 1000));
+                document.getElementById('fps').textContent = fps;
+                frameCount = 0;
+                lastTime = now;
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Update controls
+            controls.update();
+
+            // Rotate mesh slowly (optional)
+            // if (loadedMesh) {
+            //     loadedMesh.rotation.y += 0.005;
+            // }
+
+            // Render
+            renderer.render(scene, camera);
+
+            // Update FPS
+            updateFPS();
+        }
+
+        // === Start ===
+        init();
+        animate();
+
+        console.log('✓ SF3D Viewer ready');
+        console.log('💡 Drag and drop a .glb file or click "Load GLB File"');
+    </script>
+</body>
+</html>
