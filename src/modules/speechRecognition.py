@@ -50,9 +50,18 @@ class SpeechRecognizer:
         print(f"Silence duration: {silenceDuration}s")
 
     def loadWhisperModel(self):
-        print(torch.backends.mps.is_available())
+        # Cross-platform device detection
+        if torch.backends.mps.is_available():
+            self.device = "mps"  # Mac GPU
+            print("Using Mac GPU (MPS) for Whisper")
+        elif torch.cuda.is_available():
+            self.device = "cuda"  # NVIDIA GPU (PC)
+            print("Using NVIDIA GPU (CUDA) for Whisper")
+        else:
+            self.device = "cpu"
+            print("Using CPU for Whisper (will be slower)")
 
-        self.device = "mps"
+        print(f"Device selected: {self.device}")
 
         modelName = f"openai/whisper-{self.modelSize}"
         print(f"Loading from : {modelName}")
@@ -94,7 +103,7 @@ class SpeechRecognizer:
                 input=True,  # We're capturing input (not playing output)
                 frames_per_buffer=self.CHUNK,  # Read in chunks of 1024 samples
                 stream_callback=None,  # We'll read manually for more control
-                input_device_index=2
+                input_device_index=3
             )
             
             print("\n✓ Microphone opened successfully!")

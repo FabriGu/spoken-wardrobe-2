@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speech-to-Clothing Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Camera video feed */
+        #camera-feed {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror the video */
+        }
+
+        /* Overlay container for UI elements */
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        /* Top center instructions */
+        #instructions {
+            position: absolute;
+            top: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px 40px;
+            border-radius: 10px;
+            font-size: 28px;
+            text-align: center;
+            max-width: 80%;
+            display: none;
+        }
+
+        #instructions.show {
+            display: block;
+            animation: fadeIn 0.5s;
+        }
+
+        /* Recording countdown (top right corner) */
+        #recording-countdown {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 0, 0, 0.8);
+            padding: 15px 25px;
+            border-radius: 50%;
+            font-size: 32px;
+            font-weight: bold;
+            display: none;
+        }
+
+        #recording-countdown.show {
+            display: block;
+            animation: pulse 1s infinite;
+        }
+
+        /* Transcription text (bottom left corner) */
+        #transcription {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            max-width: 400px;
+            display: none;
+        }
+
+        #transcription.show {
+            display: block;
+            animation: slideInLeft 0.5s;
+        }
+
+        /* Generated image display */
+        #generated-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: rgba(0, 0, 0, 0.9);
+            display: none;
+            z-index: 10;
+        }
+
+        #generated-image.show {
+            display: block;
+            animation: fadeIn 1s;
+        }
+
+        /* Status indicator (top left) */
+        #status {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #00ff00;
+        }
+
+        #status-dot.calibrating {
+            background: #ffaa00;
+            animation: pulse 1s infinite;
+        }
+
+        #status-dot.waiting {
+            background: #0099ff;
+        }
+
+        #status-dot.recording {
+            background: #ff0000;
+            animation: pulse 0.5s infinite;
+        }
+
+        #status-dot.generating {
+            background: #ff00ff;
+            animation: pulse 1s infinite;
+        }
+
+        /* Body detection indicator */
+        #body-status {
+            position: absolute;
+            top: 70px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 15px;
+            border-radius: 5px;
+            font-size: 14px;
+            display: none;
+        }
+
+        #body-status.show {
+            display: block;
+        }
+
+        #body-status.detected {
+            background: rgba(0, 255, 0, 0.3);
+            border: 2px solid #00ff00;
+        }
+
+        #body-status.not-detected {
+            background: rgba(255, 0, 0, 0.3);
+            border: 2px solid #ff0000;
+        }
+
+        /* Loading spinner */
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #fff;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideInLeft {
+            from {
+                transform: translateX(-100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Big center message (for countdowns, etc.) */
+        #center-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 120px;
+            font-weight: bold;
+            color: #00ffff;
+            text-shadow: 0 0 20px rgba(0, 255, 255, 0.8);
+            display: none;
+        }
+
+        #center-message.show {
+            display: block;
+            animation: scaleIn 0.3s;
+        }
+
+        @keyframes scaleIn {
+            from { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+            to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+        }
+
+        /* Comparison view (original + generated side by side) */
+        #comparison {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            display: none;
+            z-index: 15;
+        }
+
+        #comparison.show {
+            display: flex;
+        }
+
+        .comparison-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .comparison-label {
+            font-size: 24px;
+            margin-bottom: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 30px;
+            border-radius: 5px;
+        }
+
+        .comparison-image {
+            max-width: 90%;
+            max-height: 80%;
+            object-fit: contain;
+            border: 2px solid #fff;
+        }
+
+    </style>
+</head>
+<body>
+    <div id="container">
+        <!-- Camera feed -->
+        <video id="camera-feed" autoplay playsinline></video>
+
+        <!-- Overlay for UI elements -->
+        <div id="overlay">
+            <!-- Status indicator -->
+            <div id="status">
+                <div id="status-dot"></div>
+                <span id="status-text">Initializing...</span>
+            </div>
+
+            <!-- Body detection status -->
+            <div id="body-status">
+                ❌ No body detected
+            </div>
+
+            <!-- Instructions -->
+            <div id="instructions">
+                Describe your dream dress using your imagination
+            </div>
+
+            <!-- Recording countdown -->
+            <div id="recording-countdown">
+                10s
+            </div>
+
+            <!-- Transcription text -->
+            <div id="transcription">
+                <strong>You said:</strong><br>
+                <span id="transcription-text"></span>
+            </div>
+
+            <!-- Center message (for big countdowns) -->
+            <div id="center-message">
+                3
+            </div>
+        </div>
+
+        <!-- Generated image (full screen when shown) -->
+        <img id="generated-image" src="" alt="Generated Clothing">
+
+        <!-- Comparison view -->
+        <div id="comparison">
+            <div class="comparison-panel">
+                <div class="comparison-label">Original Frame</div>
+                <img id="original-image" class="comparison-image" src="" alt="Original">
+            </div>
+            <div class="comparison-panel">
+                <div class="comparison-label">Generated Clothing</div>
+                <img id="comparison-generated" class="comparison-image" src="" alt="Generated">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ===== STATE MANAGEMENT =====
+        let currentState = 'INITIALIZING';
+        let cameraStream = null;
+
+        // ===== DOM ELEMENTS =====
+        const cameraFeed = document.getElementById('camera-feed');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const bodyStatus = document.getElementById('body-status');
+        const instructions = document.getElementById('instructions');
+        const recordingCountdown = document.getElementById('recording-countdown');
+        const transcription = document.getElementById('transcription');
+        const transcriptionText = document.getElementById('transcription-text');
+        const centerMessage = document.getElementById('center-message');
+        const generatedImage = document.getElementById('generated-image');
+        const comparison = document.getElementById('comparison');
+
+        // ===== INITIALIZE CAMERA =====
+        async function initCamera() {
+            try {
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                });
+
+                cameraFeed.srcObject = cameraStream;
+
+                console.log('✓ Camera initialized');
+                return true;
+            } catch (error) {
+                console.error('✗ Camera error:', error);
+                statusText.textContent = 'Camera Error';
+                return false;
+            }
+        }
+
+        // ===== STATE TRANSITIONS =====
+        function setState(newState, data = {}) {
+            console.log(`State: ${currentState} → ${newState}`, data);
+            currentState = newState;
+
+            // Hide all UI elements first
+            instructions.classList.remove('show');
+            recordingCountdown.classList.remove('show');
+            transcription.classList.remove('show');
+            centerMessage.classList.remove('show');
+            generatedImage.classList.remove('show');
+            comparison.classList.remove('show');
+            bodyStatus.classList.remove('show');
+
+            // Update status dot
+            statusDot.className = '';
+
+            switch (newState) {
+                case 'CALIBRATING':
+                    statusDot.classList.add('calibrating');
+                    statusText.textContent = 'Calibrating microphone...';
+                    instructions.textContent = 'Please stay quiet for 3 seconds';
+                    instructions.classList.add('show');
+                    break;
+
+                case 'WAITING_FOR_BODY':
+                    statusDot.classList.add('waiting');
+                    statusText.textContent = 'Waiting for body...';
+                    bodyStatus.classList.add('show', 'not-detected');
+                    bodyStatus.textContent = '❌ No body detected - Please stand in frame';
+                    break;
+
+                case 'BODY_DETECTED':
+                    bodyStatus.classList.remove('not-detected');
+                    bodyStatus.classList.add('detected');
+                    bodyStatus.textContent = '✓ Body detected!';
+                    setTimeout(() => {
+                        setState('WAITING_FOR_SPEECH');
+                    }, 2000);
+                    break;
+
+                case 'WAITING_FOR_SPEECH':
+                    statusDot.classList.add('waiting');
+                    statusText.textContent = 'Waiting for speech...';
+                    bodyStatus.classList.add('show', 'detected');
+                    bodyStatus.textContent = '✓ Body detected';
+                    instructions.textContent = 'Describe your dream dress using your imagination';
+                    instructions.classList.add('show');
+                    break;
+
+                case 'RECORDING':
+                    statusDot.classList.add('recording');
+                    statusText.innerHTML = '<div class="spinner"></div>Recording...';
+                    instructions.textContent = 'Listening to your description...';
+                    instructions.classList.add('show');
+                    recordingCountdown.classList.add('show');
+
+                    // Start countdown
+                    let remaining = 10;
+                    recordingCountdown.textContent = `${remaining}s`;
+
+                    const countdownInterval = setInterval(() => {
+                        remaining--;
+                        if (remaining > 0) {
+                            recordingCountdown.textContent = `${remaining}s`;
+                        } else {
+                            clearInterval(countdownInterval);
+                            recordingCountdown.classList.remove('show');
+                        }
+                    }, 1000);
+                    break;
+
+                case 'TRANSCRIBED':
+                    statusDot.classList.add('waiting');
+                    statusText.textContent = 'Transcription complete';
+                    transcriptionText.textContent = data.text || '';
+                    transcription.classList.add('show');
+                    setTimeout(() => {
+                        setState('WAITING_FOR_POSE');
+                    }, 2000);
+                    break;
+
+                case 'WAITING_FOR_POSE':
+                    statusDot.classList.add('waiting');
+                    statusText.textContent = 'Get in position...';
+                    instructions.textContent = 'Stand in A-POSE (arms slightly out)';
+                    instructions.classList.add('show');
+                    transcription.classList.add('show');
+
+                    // 3 second countdown
+                    setTimeout(() => {
+                        let count = 3;
+                        centerMessage.textContent = count;
+                        centerMessage.classList.add('show');
+
+                        const poseCountdown = setInterval(() => {
+                            count--;
+                            if (count > 0) {
+                                centerMessage.textContent = count;
+                            } else {
+                                clearInterval(poseCountdown);
+                                centerMessage.classList.remove('show');
+                                setState('CAPTURING');
+                            }
+                        }, 1000);
+                    }, 1000);
+                    break;
+
+                case 'CAPTURING':
+                    statusDot.classList.add('generating');
+                    statusText.textContent = 'Capturing frame...';
+                    instructions.textContent = 'Hold still...';
+                    instructions.classList.add('show');
+                    centerMessage.textContent = '📸';
+                    centerMessage.classList.add('show');
+
+                    setTimeout(() => {
+                        centerMessage.classList.remove('show');
+                        setState('GENERATING');
+                    }, 500);
+                    break;
+
+                case 'GENERATING':
+                    statusDot.classList.add('generating');
+                    statusText.innerHTML = '<div class="spinner"></div>Generating clothing...';
+                    instructions.textContent = 'Creating your dream dress... (this may take 30-60 seconds)';
+                    instructions.classList.add('show');
+                    transcription.classList.add('show');
+                    break;
+
+                case 'DONE':
+                    statusDot.classList.remove('generating');
+                    statusText.textContent = '✓ Complete!';
+                    instructions.textContent = 'Your dream dress is ready!';
+                    instructions.classList.add('show');
+                    transcription.classList.add('show');
+
+                    if (data.imageUrl) {
+                        generatedImage.src = data.imageUrl;
+                        generatedImage.classList.add('show');
+
+                        // Show comparison after 3 seconds
+                        setTimeout(() => {
+                            if (data.originalUrl) {
+                                document.getElementById('original-image').src = data.originalUrl;
+                                document.getElementById('comparison-generated').src = data.imageUrl;
+                                generatedImage.classList.remove('show');
+                                comparison.classList.add('show');
+                            }
+                        }, 3000);
+                    }
+                    break;
+
+                case 'ERROR':
+                    statusDot.style.background = '#ff0000';
+                    statusText.textContent = '✗ Error: ' + (data.message || 'Unknown error');
+                    instructions.textContent = 'Something went wrong. Please refresh the page.';
+                    instructions.classList.add('show');
+                    break;
+            }
+        }
+
+        // ===== SIMULATE PIPELINE (for testing without Python backend) =====
+        async function simulatePipeline() {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Calibration
+            setState('CALIBRATING');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+            // Wait for body
+            setState('WAITING_FOR_BODY');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // Body detected
+            setState('BODY_DETECTED');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // Wait for speech (auto-trigger after 3 seconds for demo)
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+            // Recording
+            setState('RECORDING');
+            await new Promise(resolve => setTimeout(resolve, 10000));
+
+            // Transcribed
+            setState('TRANSCRIBED', {
+                text: 'a flowing elegant dress with golden embroidery and floral patterns'
+            });
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // Wait for pose (includes 3s countdown)
+            setState('WAITING_FOR_POSE');
+            await new Promise(resolve => setTimeout(resolve, 5000));
+
+            // Generating
+            setState('GENERATING');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+            // Done (with placeholder image)
+            setState('DONE', {
+                imageUrl: 'https://via.placeholder.com/800x1200/663399/ffffff?text=Generated+Dress',
+                originalUrl: 'https://via.placeholder.com/800x1200/336699/ffffff?text=Original+Frame'
+            });
+        }
+
+        // ===== WEBSOCKET CONNECTION (for real Python backend) =====
+        let ws = null;
+
+        function connectWebSocket() {
+            try {
+                ws = new WebSocket('ws://localhost:8765');
+
+                ws.onopen = () => {
+                    console.log('✓ WebSocket connected');
+                    statusText.textContent = 'Connected to backend';
+                };
+
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    handleBackendUpdate(data);
+                };
+
+                ws.onerror = (error) => {
+                    console.error('✗ WebSocket error:', error);
+                    // Fallback to simulation if WebSocket fails
+                    console.log('Falling back to simulation mode');
+                    simulatePipeline();
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket closed');
+                };
+
+            } catch (error) {
+                console.error('✗ WebSocket connection failed:', error);
+                // Run simulation instead
+                simulatePipeline();
+            }
+        }
+
+        function handleBackendUpdate(data) {
+            console.log('Backend update:', data);
+
+            switch (data.type) {
+                case 'state_change':
+                    setState(data.state, data);
+                    break;
+
+                case 'recording_progress':
+                    recordingCountdown.textContent = `${Math.ceil(data.remaining)}s`;
+                    break;
+
+                case 'transcription':
+                    transcriptionText.textContent = data.text;
+                    break;
+
+                case 'generated_image':
+                    setState('DONE', {
+                        imageUrl: data.image_url,
+                        originalUrl: data.original_url
+                    });
+                    break;
+
+                case 'error':
+                    setState('ERROR', { message: data.message });
+                    break;
+            }
+        }
+
+        // ===== INITIALIZE =====
+        async function init() {
+            console.log('Initializing Speech-to-Clothing Viewer...');
+
+            // Initialize camera
+            const cameraOk = await initCamera();
+            if (!cameraOk) {
+                setState('ERROR', { message: 'Camera initialization failed' });
+                return;
+            }
+
+            // Try to connect to WebSocket backend
+            // If it fails, will fall back to simulation
+            setTimeout(() => {
+                connectWebSocket();
+            }, 1000);
+        }
+
+        // Start when page loads
+        window.addEventListener('load', init);
+
+        // Handle keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'r' || e.key === 'R') {
+                // Reset/restart
+                location.reload();
+            }
+            if (e.key === 's' || e.key === 'S') {
+                // Start simulation (for testing)
+                simulatePipeline();
+            }
+        });
+    </script>
+</body>
+</html>

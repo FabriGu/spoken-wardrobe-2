@@ -1,0 +1,95 @@
+{
+  "_meta": {
+    "description": "SDXL Inpainting Workflow Template for ComfyUI API",
+    "note": "This is a TEMPLATE - you need to export the actual workflow from your ComfyUI interface",
+    "instructions": [
+      "1. Open ComfyUI web interface at http://itp-ml.itp.tsoa.nyu.edu:9199",
+      "2. Create an inpainting workflow with these nodes:",
+      "   - LoadImage (for input frame)",
+      "   - LoadImage (for mask)",
+      "   - CheckpointLoaderSimple (SDXL inpainting model)",
+      "   - CLIPTextEncode (positive prompt)",
+      "   - CLIPTextEncode (negative prompt)",
+      "   - VAEEncodeForInpaint",
+      "   - KSampler",
+      "   - VAEDecode",
+      "   - SaveImage",
+      "3. Click 'Save (API Format)' button",
+      "4. Replace this file with the exported JSON",
+      "5. Add these placeholders in the exported JSON:",
+      "   - In positive CLIPTextEncode: replace text with {PROMPT}",
+      "   - In negative CLIPTextEncode: replace text with {NEGATIVE_PROMPT}",
+      "   - In LoadImage nodes: replace image names with {INPUT_IMAGE} and {MASK_IMAGE}",
+      "   - In KSampler: replace seed with {SEED}, steps with {STEPS}, cfg with {CFG}"
+    ]
+  },
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{INPUT_IMAGE}"
+    }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{MASK_IMAGE}"
+    }
+  },
+  "3": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sd_xl_inpainting_1.0.safetensors"
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{PROMPT}",
+      "clip": ["3", 1]
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{NEGATIVE_PROMPT}",
+      "clip": ["3", 1]
+    }
+  },
+  "6": {
+    "class_type": "VAEEncodeForInpaint",
+    "inputs": {
+      "pixels": ["1", 0],
+      "mask": ["2", 0],
+      "vae": ["3", 2]
+    }
+  },
+  "7": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{SEED}",
+      "steps": "{STEPS}",
+      "cfg": "{CFG}",
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": ["3", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "latent_image": ["6", 0]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["7", 0],
+      "vae": ["3", 2]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "comfyui_clothing",
+      "images": ["8", 0]
+    }
+  }
+}
