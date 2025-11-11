@@ -1,0 +1,88 @@
+# PC-Specific Dependencies (Windows with NVIDIA GPU)
+# ====================================================
+# Install AFTER requirements-core.txt
+
+# PREREQUISITES:
+# - NVIDIA GPU drivers (latest)
+# - CUDA Toolkit 11.8+ (https://developer.nvidia.com/cuda-downloads)
+# - cuDNN 8.6+ (https://developer.nvidia.com/cudnn)
+
+# AI/ML Frameworks
+# -----------------
+
+# PyTorch with CUDA support
+# IMPORTANT: Install from PyTorch website for CUDA 11.8 or 12.1
+# Run: pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# (This command is listed in SETUP_GUIDE.md)
+# DO NOT install from requirements - use the command above instead!
+
+# Hugging Face Transformers (for Whisper speech recognition)
+transformers==4.35.2
+
+# Stable Diffusion
+diffusers==0.24.0
+accelerate==0.25.0
+
+# Background removal for TripoSR
+rembg==2.0.56
+
+# TensorFlow (Windows version with CUDA support)
+tensorflow==2.15.0
+
+# Associated TensorFlow packages
+tensorboard==2.15.2
+keras==2.15.0
+tensorflow-estimator==2.15.0
+ml-dtypes==0.2.0
+protobuf==4.25.8
+
+# BodyPix (for body segmentation)
+tf-bodypix==0.1.0
+tfjs-graph-converter==1.3.0  # Requires manual patch (see SETUP_GUIDE.md)
+
+# Intel RealSense (for PC testing)
+# ---------------------------------
+# PREREQUISITE: Install Intel RealSense SDK 2.0
+# Download from: https://github.com/IntelRealSense/librealsense/releases
+pyrealsense2==2.54.2.5684
+
+# Mesh Rigging (for clothing animation)
+# --------------------------------------
+gpytoolbox==0.2.0
+
+# Optional: OAK-D Support on PC
+# ------------------------------
+# If you want to use OAK-D on PC as well (recommended for cross-platform)
+# Uncomment these lines:
+# depthai==2.24.0.0
+# opencv-contrib-python==4.8.1.78
+# open3d==0.18.0
+# blobconverter==1.4.2
+
+# MANUAL PATCH REQUIRED:
+# ----------------------
+# After installing tfjs-graph-converter, you MUST apply this patch:
+#
+# File: venv\Lib\site-packages\tfjs_graph_converter\util.py
+# Line 30: Change np.bool to np.bool_
+#
+# This fixes a NumPy 1.23+ compatibility issue.
+# See SETUP_GUIDE.md for detailed instructions.
+
+# CUDA INSTALLATION NOTES:
+# -------------------------
+# PyTorch CUDA installation is platform-specific.
+# DO NOT use `pip install torch` directly!
+#
+# For CUDA 11.8:
+#   pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+#
+# For CUDA 12.1:
+#   pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+#
+# For CPU-only (NOT recommended):
+#   pip3 install torch torchvision torchaudio
+#
+# Verify CUDA after install:
+#   python -c "import torch; print(torch.cuda.is_available())"
+# Should print: True

@@ -1,0 +1,23 @@
+{
+  "1": {
+    "inputs": {
+      "image": "{{INPUT_IMAGE}}"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "2": {
+    "inputs": {
+      "Seed": 0,
+      "Material_Type": "PBR",
+      "Polygon_count": "200K-Triangle",
+      "Images": ["1", 0]
+    },
+    "class_type": "Rodin3D_Regular",
+    "_meta": {
+      "title": "Rodin 3D Generate - Regular"
+    }
+  }
+}

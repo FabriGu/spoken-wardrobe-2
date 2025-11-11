@@ -85,6 +85,9 @@ Generate a 3D mesh from a single image:
 ```bash
 source venv/bin/activate
 
+# IMPORTANT FOR MAC: Use CPU mode to avoid MPS memory errors
+export SF3D_USE_CPU=1
+
 # Basic usage (default settings)
 python tests/sf3d_test_1_basic.py path/to/image.png
 
@@ -289,18 +292,27 @@ pip install ./external/stable-fast-3d/uv_unwrapper/
 
 ### Memory Errors
 
-**Error**: `RuntimeError: Out of memory`
+**Error**: `RuntimeError: MPS backend out of memory`
 
-**Solutions**:
+This is **common on Mac** with SF3D. The model uses ~5GB GPU memory which exceeds most Mac GPU limits.
+
+**Solution (REQUIRED FOR MAC)**:
 ```bash
-# Use CPU instead of GPU
-SF3D_USE_CPU=1 python tests/sf3d_test_1_basic.py image.png
+# Use CPU instead of MPS (Mac GPU)
+export SF3D_USE_CPU=1
+python tests/sf3d_test_1_basic.py image.png
 
-# Lower texture resolution
+# Lower texture resolution to reduce memory
 python tests/sf3d_test_1_basic.py image.png --texture-resolution 512
 
 # Process one image at a time (not batches)
 ```
+
+**Performance on Mac CPU**:
+- Generation time: ~50 seconds (acceptable for non-real-time use)
+- GPU would be ~10 seconds, but doesn't work due to memory
+
+**Alternative**: Keep using TripoSR for Mac GPU, which uses less memory
 
 ### Mesh Orientation Wrong
 
@@ -360,6 +372,327 @@ python tests/sf3d_test_1_basic.py image.png \
     --remesh-option none \
     --foreground-ratio 0.75
 ```
+
+---
+
+## Improving Mesh Quality
+
+### Understanding Quality Trade-offs
+
+SF3D mesh quality depends on several factors:
+
+**Hardware Constraints**:
+- **Mac CPU** (~50s): Lower quality due to limited computational resources
+- **Mac GPU (MPS)**: Would be faster (~10s) but **out of memory** with SF3D (~5GB required)
+- **PC GPU (CUDA)**: Highest quality, fastest speed (0.5-2s), no memory limits
+
+**Quality Settings** (in order of impact):
+
+#### 1. Texture Resolution (`--texture-resolution`)
+
+Controls the size of the baked texture map:
+
+```bash
+# Low quality (faster, Mac CPU recommended)
+--texture-resolution 512   # 512x512 texture
+
+# Medium quality (default)
+--texture-resolution 1024  # 1024x1024 texture
+
+# High quality (requires GPU)
+--texture-resolution 2048  # 2048x2048 texture
+
+# Ultra quality (GPU only)
+--texture-resolution 4096  # 4096x4096 texture
+```
+
+**Current limitation on Mac CPU**: Stick to 512-1024 for acceptable generation times.
+
+#### 2. Remeshing Option (`--remesh-option`)
+
+Controls mesh topology and structure:
+
+```bash
+# No remeshing (fastest but raw marching tetrahedra topology)
+--remesh-option none
+
+# Triangle remeshing (balanced topology)
+--remesh-option triangle
+
+# Quad remeshing (BEST for animation, proper edge flow)
+--remesh-option quad
+```
+
+**Why quad is better**: Provides proper quad flow which deforms more naturally during animation. **Highly recommended** for the Spoken Wardrobe rigging system.
+
+#### 3. Target Vertex Count (`--target-vertex-count`)
+
+Controls mesh density:
+
+```bash
+# Automatic (model decides based on detail)
+--target-vertex-count -1
+
+# Low poly (performance, 5K vertices)
+--target-vertex-count 5000
+
+# Medium poly (balanced, 10K vertices)
+--target-vertex-count 10000
+
+# High poly (quality, 15K+ vertices)
+--target-vertex-count 15000
+```
+
+**Trade-off**: Higher vertex count = more detail but slower real-time deformation.
+
+#### 4. Foreground Ratio (`--foreground-ratio`)
+
+Controls how much of the frame the object fills:
+
+```bash
+# More padding (object smaller in frame)
+--foreground-ratio 0.65
+
+# Default (balanced)
+--foreground-ratio 0.75
+
+# Tight crop (object fills more of frame)
+--foreground-ratio 0.85
+```
+
+**Recommendation**: 0.75-0.85 for clothing to capture full detail.
+
+### Recommended Settings by Use Case
+
+#### Mac CPU (Current Setup)
+```bash
+# Balanced quality/speed for testing
+python tests/sf3d_test_1_basic.py image.png \
+    --texture-resolution 1024 \
+    --remesh-option quad \
+    --target-vertex-count 10000 \
+    --foreground-ratio 0.75
+```
+
+**Expected**: ~50 seconds, decent quality for testing
+
+#### PC GPU (Tomorrow)
+```bash
+# High quality production settings
+python tests/sf3d_test_1_basic.py image.png \
+    --texture-resolution 2048 \
+    --remesh-option quad \
+    --target-vertex-count 15000 \
+    --foreground-ratio 0.85
+```
+
+**Expected**: 0.5-2 seconds, high quality suitable for final meshes
+
+#### Rapid Prototyping (Mac CPU)
+```bash
+# Fast iteration for testing
+python tests/sf3d_test_1_basic.py image.png \
+    --texture-resolution 512 \
+    --remesh-option none \
+    --target-vertex-count 5000
+```
+
+**Expected**: ~30 seconds, lower quality but fast iteration
+
+### Input Image Quality Matters
+
+SF3D quality also depends heavily on input image:
+
+**Good Input Images**:
+- Clear, well-lit subject
+- Subject fills 60-80% of frame
+- Minimal background clutter
+- Sharp focus (not blurry)
+- Consistent lighting
+
+**Poor Input Images**:
+- Dark or underexposed
+- Subject too small in frame
+- Busy background
+- Motion blur
+- Extreme angles
+
+**Tip**: The clothing images generated by your Stable Diffusion pipeline should work well since they're already segmented and well-framed.
+
+### Why Mac CPU Quality is Lower
+
+The quality difference you're seeing is NOT due to bugs - it's fundamental to CPU vs GPU:
+
+1. **Memory bandwidth**: CPU has lower memory bandwidth than GPU
+2. **Parallel processing**: GPU has thousands of cores vs CPU's handful
+3. **Precision**: SF3D may use reduced precision on CPU to fit in memory
+4. **Timeout constraints**: CPU may hit internal timeouts causing early termination
+
+**Solution**: Use PC with NVIDIA GPU for production-quality meshes. Mac CPU is fine for testing and development.
+
+---
+
+## Understanding Textures and Materials (Why is it Shiny?)
+
+### How SF3D Textures Work
+
+SF3D generates **UV-unwrapped textures** with **PBR (Physically Based Rendering) materials**. This is very different from TripoSR's simple vertex colors.
+
+#### What is UV Unwrapping?
+
+Think of UV unwrapping like unfolding a 3D box into a flat pattern:
+
+```
+3D Mesh → Unfold → 2D Texture Map → Wrap back → Textured 3D Mesh
+```
+
+**Benefits**:
+- Textures can be edited in 2D (Photoshop, GIMP)
+- Higher resolution than vertex colors
+- Can be swapped without changing geometry
+- Standard format for game engines and 3D software
+
+#### What is PBR?
+
+PBR (Physically Based Rendering) materials simulate realistic light interaction using multiple texture maps:
+
+1. **Base Color (Albedo)**: The actual color/pattern of the surface
+2. **Normal Map**: Simulates surface details (wrinkles, bumps) without adding geometry
+3. **Roughness Map**: Controls how shiny/matte the surface is
+   - 0.0 = mirror-like (very shiny)
+   - 1.0 = matte (no shine)
+4. **Metalness Map**: Whether surface is metal or non-metal
+   - 0.0 = non-metal (fabric, plastic, skin)
+   - 1.0 = metal (steel, gold, aluminum)
+
+**SF3D includes all of these maps** in the GLB file!
+
+### Why Your Mesh Appears Shiny
+
+The shininess you're seeing is likely due to:
+
+#### 1. Default Material Properties in GLB
+
+SF3D may be setting conservative material values:
+- Roughness too low (too shiny)
+- Metalness too high (looks like metal instead of fabric)
+
+#### 2. Viewer Lighting
+
+The Three.js viewer uses **Phong lighting** which can make materials appear more reflective than they should. Different lighting models show materials differently:
+
+- **Phong lighting**: More specular highlights (shiny)
+- **PBR lighting**: More physically accurate
+- **Flat lighting**: No highlights at all
+
+#### 3. Missing Environment Maps
+
+PBR materials look best with **environment mapping** (reflections of surroundings). Without it, they can look overly shiny or unrealistic.
+
+### How to Inspect Materials in Your GLB
+
+You can check what SF3D actually generated by loading the GLB in Blender:
+
+```bash
+# Open Blender, then:
+File → Import → glTF 2.0 (.glb/.gltf)
+# Select: generated_meshes/sf3d_test_1/mesh.glb
+
+# In Shading workspace, select the mesh and check:
+# - Base Color texture
+# - Roughness value (should be ~0.8 for fabric)
+# - Metallic value (should be ~0.0 for fabric)
+# - Normal map (adds surface detail)
+```
+
+### Solutions to Reduce Shininess
+
+#### Option 1: Adjust Viewer Lighting (Quick Fix)
+
+The `sf3d_viewer_textured.html` viewer can be modified to reduce shininess:
+
+**Current lighting** (in viewer HTML):
+```javascript
+// Uses MeshPhongMaterial which can be shiny
+```
+
+**Better approach** (edit viewer):
+```javascript
+// Change to MeshStandardMaterial for better PBR
+material = new THREE.MeshStandardMaterial({
+    map: textureMap,
+    roughness: 0.8,  // Reduce shininess
+    metalness: 0.0   // Non-metallic (fabric)
+});
+```
+
+#### Option 2: Modify GLB in Blender (Proper Fix)
+
+1. Open GLB in Blender
+2. Switch to **Shading** workspace
+3. Select the mesh object
+4. In the shader nodes, find **Principled BSDF**:
+   - Set **Roughness** to 0.8-1.0 (matte fabric)
+   - Set **Metallic** to 0.0 (non-metal)
+   - Adjust **Specular** to 0.2-0.3 (reduce reflections)
+5. Export as GLB: `File → Export → glTF 2.0`
+
+#### Option 3: Edit Viewer Environment (Best for Realism)
+
+Add environment lighting to viewer for more realistic PBR:
+
+```javascript
+// Add HDRI environment map
+const pmremGenerator = new THREE.PMREMGenerator(renderer);
+scene.environment = pmremGenerator.fromScene(
+    new THREE.RoomEnvironment()
+).texture;
+```
+
+This makes PBR materials render more realistically.
+
+### What SF3D Actually Generates
+
+When you look inside the GLB file, SF3D includes:
+
+```
+mesh.glb (binary file)
+├── Geometry (vertices, faces, UVs)
+├── Base Color Texture (PNG/JPG embedded)
+├── Normal Map (for surface detail)
+├── Roughness Map (controls shine)
+├── Metalness Map (metal vs non-metal)
+└── Material Properties (PBR parameters)
+```
+
+**You can extract these textures** using Blender or glTF tools if you want to edit them separately.
+
+### Comparing to TripoSR
+
+| Feature | TripoSR | SF3D |
+|---------|---------|------|
+| **Texture Type** | Vertex colors | UV-mapped textures |
+| **Material System** | Simple RGB | PBR (roughness, metalness, normals) |
+| **Shininess Control** | None (matte only) | Full control via roughness map |
+| **Editability** | Hard (must recolor vertices) | Easy (edit textures in 2D) |
+| **File Format** | OBJ/GLB (no materials) | GLB with embedded PBR materials |
+
+**Why SF3D looks shiny**: Because it's trying to be more realistic! You just need to adjust the material parameters to match fabric instead of the default conservative values.
+
+### Recommended Workflow
+
+For the Spoken Wardrobe project:
+
+1. **Generate mesh with SF3D** (as you're doing now)
+2. **Import GLB into Blender** (one-time setup)
+3. **Adjust material to look like fabric**:
+   - Roughness: 0.8-0.9 (matte fabric)
+   - Metalness: 0.0 (not metal)
+   - Specular: 0.2-0.3 (subtle highlights)
+4. **Export as GLB** with adjusted materials
+5. **Use in your pipeline** for rigging and animation
+
+**OR** modify the Three.js viewer to automatically apply fabric-like materials to loaded meshes.
 
 ---
 

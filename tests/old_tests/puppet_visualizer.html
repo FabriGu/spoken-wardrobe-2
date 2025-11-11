@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Puppet Visualizer - Improved with Joint Connections</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Monaco', 'Courier New', monospace;
+            background: #000;
+            color: #0f0;
+            overflow: hidden;
+        }
+        
+        #container {
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 15px;
+            border: 2px solid #0f0;
+            border-radius: 5px;
+            font-size: 14px;
+            z-index: 100;
+            max-width: 380px;
+        }
+        
+        #info h2 {
+            color: #0ff;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+        
+        #info .status {
+            margin: 5px 0;
+        }
+        
+        #info .status.connected {
+            color: #0f0;
+        }
+        
+        #info .status.disconnected {
+            color: #f00;
+        }
+        
+        .controls {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #0f0;
+        }
+        
+        .debug-data {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .improvement-note {
+            margin-top: 10px;
+            padding: 8px;
+            background: rgba(0, 255, 0, 0.1);
+            border: 1px solid #0f0;
+            border-radius: 3px;
+            font-size: 12px;
+            color: #0f0;
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+    
+    <div id="info">
+        <h2>🔧 Improved Puppet Visualizer</h2>
+        <div class="status disconnected" id="status">Disconnected</div>
+        <div id="stats">
+            <div>Parts: <span id="part-count">0</span></div>
+            <div>Keypoints: <span id="keypoint-count">0</span></div>
+            <div>Joints: <span id="joint-count">0</span></div>
+            <div>FPS: <span id="fps">0</span></div>
+        </div>
+        <div class="controls">
+            <div><strong>🎮 Controls:</strong></div>
+            <div>▪ Mouse drag: Orbit</div>
+            <div>▪ Scroll: Zoom</div>
+            <div>▪ W/A/S/D: Move camera</div>
+            <div>▪ Q/E: Move up/down</div>
+            <div>▪ R: Reset camera</div>
+        </div>
+        <div class="improvement-note">
+            <strong>✨ Improvements:</strong><br>
+            • Enhanced Z-axis depth<br>
+            • Joint-connected boxes<br>
+            • Visual joint markers (yellow)<br>
+            • Smoother movement
+        </div>
+        <div class="debug-data" id="debug">
+            Waiting for data...
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <script>
+        // Scene setup
+        let scene, camera, renderer, controls;
+        let puppetGroup, keypointGroup, jointGroup, axesHelper;
+        
+        // State
+        let ws;
+        let connected = false;
+        let frameCount = 0;
+        let lastFpsUpdate = Date.now();
+        
+        // Initialize Three.js scene
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+            
+            // Camera - positioned to better see depth
+            camera = new THREE.PerspectiveCamera(
+                75,
+                window.innerWidth / window.innerHeight,
+                0.01,
+                100
+            );
+            camera.position.set(1, 1, 3);  // Slightly offset to see depth better
+            camera.lookAt(0, 1, 0);
+            
+            // Renderer with better depth perception
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true,
+                alpha: false
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.getElementById('container').appendChild(renderer.domElement);
+            
+            // Orbit controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 1, 0);
+            controls.enableDamping = true;  // Smooth camera movement
+            controls.dampingFactor = 0.05;
+            controls.update();
+            
+            // Lighting - improved for better depth perception
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            // Add multiple directional lights for better 3D depth cues
+            const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.4);
+            directionalLight1.position.set(5, 10, 5);
+            scene.add(directionalLight1);
+            
+            const directionalLight2 = new THREE.DirectionalLight(0x4444ff, 0.2);
+            directionalLight2.position.set(-5, 5, -5);
+            scene.add(directionalLight2);
+            
+            // Add rim light for depth
+            const rimLight = new THREE.DirectionalLight(0xff4444, 0.2);
+            rimLight.position.set(0, 0, -5);
+            scene.add(rimLight);
+            
+            // Coordinate axes
+            axesHelper = new THREE.AxesHelper(1);
+            scene.add(axesHelper);
+            
+            // Groups for different elements
+            puppetGroup = new THREE.Group();
+            scene.add(puppetGroup);
+            
+            keypointGroup = new THREE.Group();
+            scene.add(keypointGroup);
+            
+            jointGroup = new THREE.Group();  // NEW: Separate group for joint markers
+            scene.add(jointGroup);
+            
+            // Grid (ground plane) - extends further for depth reference
+            const gridHelper = new THREE.GridHelper(10, 40, 0x00ff00, 0x003300);
+            scene.add(gridHelper);
+            
+            // Add a subtle fog for depth perception
+            scene.fog = new THREE.Fog(0x000000, 5, 15);
+            
+            // Keyboard controls
+            setupKeyboardControls();
+            
+            // Window resize
+            window.addEventListener('resize', onWindowResize);
+            
+            // Start animation loop
+            animate();
+            
+            console.log('✓ Three.js initialized with improved depth perception');
+        }
+        
+        // Setup keyboard controls for camera movement
+        function setupKeyboardControls() {
+            const moveSpeed = 0.05;
+            const keys = {};
+            
+            window.addEventListener('keydown', (e) => {
+                keys[e.key.toLowerCase()] = true;
+                
+                if (e.key.toLowerCase() === 'r') {
+                    // Reset camera
+                    camera.position.set(1, 1, 3);
+                    controls.target.set(0, 1, 0);
+                    controls.update();
+                }
+            });
+            
+            window.addEventListener('keyup', (e) => {
+                keys[e.key.toLowerCase()] = false;
+            });
+            
+            function updateCameraMovement() {
+                if (keys['w']) camera.position.z -= moveSpeed;
+                if (keys['s']) camera.position.z += moveSpeed;
+                if (keys['a']) camera.position.x -= moveSpeed;
+                if (keys['d']) camera.position.x += moveSpeed;
+                if (keys['q']) camera.position.y -= moveSpeed;
+                if (keys['e']) camera.position.y += moveSpeed;
+            }
+            
+            // Update camera movement in animation loop
+            window.updateCameraMovement = updateCameraMovement;
+        }
+        
+        // Update puppet visualization - IMPROVED VERSION with joint markers
+        function updatePuppet(message) {
+            // Extract data from message
+            const data = message.data || message;
+            
+            // Clear previous puppet
+            while (puppetGroup.children.length > 0) {
+                puppetGroup.remove(puppetGroup.children[0]);
+            }
+            
+            while (keypointGroup.children.length > 0) {
+                keypointGroup.remove(keypointGroup.children[0]);
+            }
+            
+            while (jointGroup.children.length > 0) {
+                jointGroup.remove(jointGroup.children[0]);
+            }
+            
+            // Update axes visibility
+            if (data.show_axes !== undefined) {
+                axesHelper.visible = data.show_axes;
+            }
+            
+            // Draw keypoints as small spheres (cyan)
+            if (data.keypoints) {
+                const keypointGeometry = new THREE.SphereGeometry(0.02, 8, 8);
+                const keypointMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+                
+                for (const kp of data.keypoints) {
+                    const sphere = new THREE.Mesh(keypointGeometry, keypointMaterial);
+                    sphere.position.set(kp.position[0], kp.position[1], kp.position[2]);
+                    keypointGroup.add(sphere);
+                }
+            }
+            
+            // NEW: Draw joint markers as larger spheres (yellow/gold)
+            if (data.joints && data.show_joints !== false) {
+                const jointGeometry = new THREE.SphereGeometry(0.04, 12, 12);
+                const jointMaterial = new THREE.MeshStandardMaterial({ 
+                    color: 0xffff00,  // Yellow for joints
+                    emissive: 0xffff00,
+                    emissiveIntensity: 0.5,
+                    metalness: 0.7,
+                    roughness: 0.3
+                });
+                
+                for (const joint of data.joints) {
+                    const sphere = new THREE.Mesh(jointGeometry, jointMaterial);
+                    sphere.position.set(joint.position[0], joint.position[1], joint.position[2]);
+                    jointGroup.add(sphere);
+                }
+            }
+            
+            // Draw body parts as wireframe rectangles using explicit edge rendering
+            if (data.parts) {
+                for (const part of data.parts) {
+                    const vertices = part.vertices;
+                    const edges = part.edges;
+                    
+                    // Create line segments directly from the edge definitions
+                    const positions = [];
+                    
+                    for (const edge of edges) {
+                        const startIdx = edge[0];
+                        const endIdx = edge[1];
+                        
+                        // Add start vertex position
+                        positions.push(
+                            vertices[startIdx][0],
+                            vertices[startIdx][1],
+                            vertices[startIdx][2]
+                        );
+                        
+                        // Add end vertex position
+                        positions.push(
+                            vertices[endIdx][0],
+                            vertices[endIdx][1],
+                            vertices[endIdx][2]
+                        );
+                    }
+                    
+                    // Create geometry with explicit line segments
+                    const geometry = new THREE.BufferGeometry();
+                    geometry.setAttribute('position', 
+                        new THREE.BufferAttribute(new Float32Array(positions), 3));
+                    
+                    // Create material - magenta wireframe with slight glow
+                    const material = new THREE.LineBasicMaterial({ 
+                        color: 0xff00ff,  // Magenta
+                        linewidth: 2,
+                        opacity: 0.9,
+                        transparent: true
+                    });
+                    
+                    // Create line segments and add to scene
+                    const wireframe = new THREE.LineSegments(geometry, material);
+                    puppetGroup.add(wireframe);
+                    
+                    // OPTIONAL: Add semi-transparent faces for better depth perception
+                    // This helps you see which boxes are in front vs behind
+                    if (false) {  // Set to true to enable faces
+                        const faceGeometry = createBoxFaceGeometry(vertices);
+                        const faceMaterial = new THREE.MeshBasicMaterial({
+                            color: 0xff00ff,
+                            transparent: true,
+                            opacity: 0.1,
+                            side: THREE.DoubleSide
+                        });
+                        const faceMesh = new THREE.Mesh(faceGeometry, faceMaterial);
+                        puppetGroup.add(faceMesh);
+                    }
+                }
+            }
+            
+            // Update stats
+            document.getElementById('part-count').textContent = data.parts ? data.parts.length : 0;
+            document.getElementById('keypoint-count').textContent = data.keypoints ? data.keypoints.length : 0;
+            document.getElementById('joint-count').textContent = data.joints ? data.joints.length : 0;
+            
+            // Update debug info
+            const debugInfo = `
+                Parts: ${data.parts ? data.parts.map(p => p.name).join(', ') : 'none'}
+                Joints visible: ${data.show_joints !== false ? 'Yes' : 'No'}
+            `;
+            document.getElementById('debug').textContent = debugInfo.trim();
+        }
+        
+        // Helper function to create face geometry from box vertices
+        function createBoxFaceGeometry(vertices) {
+            const geometry = new THREE.BufferGeometry();
+            
+            // Define the 6 faces of the box (each face = 2 triangles = 6 vertices)
+            const positions = [];
+            const indices = [
+                // Bottom face (Z-)
+                0, 1, 2,  0, 2, 3,
+                // Top face (Z+)
+                4, 5, 6,  4, 6, 7,
+                // Front face (Y+)
+                2, 3, 7,  2, 7, 6,
+                // Back face (Y-)
+                0, 1, 5,  0, 5, 4,
+                // Right face (X+)
+                1, 2, 6,  1, 6, 5,
+                // Left face (X-)
+                0, 3, 7,  0, 7, 4
+            ];
+            
+            // Flatten vertices
+            for (const v of vertices) {
+                positions.push(v[0], v[1], v[2]);
+            }
+            
+            geometry.setAttribute('position', 
+                new THREE.BufferAttribute(new Float32Array(positions), 3));
+            geometry.setIndex(indices);
+            geometry.computeVertexNormals();
+            
+            return geometry;
+        }
+        
+        // Connect to WebSocket
+        function connectWebSocket() {
+            console.log('Connecting to WebSocket...');
+            ws = new WebSocket('ws://localhost:8766');
+            
+            ws.onopen = () => {
+                console.log('✓ WebSocket connected');
+                connected = true;
+                document.getElementById('status').textContent = 'Connected ✓';
+                document.getElementById('status').className = 'status connected';
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    
+                    if (message.type === 'puppet_update') {
+                        updatePuppet(message);
+                        
+                        // Update FPS
+                        frameCount++;
+                        const now = Date.now();
+                        if (now - lastFpsUpdate > 1000) {
+                            const fps = frameCount / ((now - lastFpsUpdate) / 1000);
+                            document.getElementById('fps').textContent = fps.toFixed(1);
+                            frameCount = 0;
+                            lastFpsUpdate = now;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error parsing message:', error);
+                    console.log('Raw message:', event.data);
+                }
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                connected = false;
+                document.getElementById('status').textContent = 'Disconnected ✗';
+                document.getElementById('status').className = 'status disconnected';
+                
+                // Try to reconnect after 2 seconds
+                setTimeout(connectWebSocket, 2000);
+            };
+        }
+        
+        // Animation loop with damped controls for smoother movement
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Update camera movement
+            if (window.updateCameraMovement) {
+                window.updateCameraMovement();
+            }
+            
+            // Update controls (needed for damping)
+            controls.update();
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Window resize handler
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // Initialize
+        init();
+        connectWebSocket();
+        
+        console.log('🔧 Improved Puppet Visualizer initialized');
+        console.log('Features:');
+        console.log('  ✓ Enhanced depth perception with better lighting');
+        console.log('  ✓ Joint markers showing connection points');
+        console.log('  ✓ Boxes positioned to meet at joints');
+        console.log('Waiting for data from 3d_puppet_keypoints_improved.py...');
+    </script>
+</body>
+</html>

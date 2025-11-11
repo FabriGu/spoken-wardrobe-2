@@ -1,0 +1,11 @@
+{
+  "timestamp": 1762841137,
+  "transcription": "and the t-shirt, red t-shirt, red t-shirt, red t-shirt, red t-shirt, red t-shirt.",
+  "settings_2d": {
+    "seed": 100,
+    "steps": 35,
+    "cfg": 9.5
+  },
+  "has_3d_mesh": true,
+  "3d_generation_method": "rodin_api_direct"
+}

@@ -1,0 +1,40 @@
+# Core Dependencies (Cross-Platform)
+# ====================================
+# These work on both Mac and PC
+
+# CRITICAL: NumPy 1.23.5 is the "Goldilocks version"
+# - Compatible with PyTorch (compiled against NumPy 1.x)
+# - Compatible with TensorFlow 2.15.0
+# - DO NOT upgrade to 2.x without testing!
+numpy==1.23.5
+
+# Computer Vision
+opencv-python-headless==4.12.0.88
+mediapipe==0.10.8
+
+# Image Processing
+pillow==10.1.0
+
+# Audio (for speech recognition)
+pyaudio==0.2.14
+
+# 3D Mesh Processing
+trimesh==4.0.8
+pyglet<2  # trimesh requires pyglet<2
+networkx==3.1
+
+# Async/WebSocket
+websockets==12.0
+aiohttp==3.9.1
+
+# Scientific Computing
+scipy==1.11.4
+
+# Utilities
+Pillow==10.1.0
+tqdm==4.66.1
+
+# Chumpy (patched version for getargs compatibility)
+# IMPORTANT: Must use this specific commit (not PyPI version)
+# This fixes: "getargs() got an unexpected keyword argument" error
+git+https://github.com/mattloper/chumpy@9b045ff5d6588a24a0bab52c83f032e2ba433e17

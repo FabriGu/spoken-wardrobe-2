@@ -1,0 +1,69 @@
+{
+  "1": {
+    "inputs": {
+      "model_name": "stabilityai/stable-fast-3d"
+    },
+    "class_type": "LoadSF3DModel",
+    "_meta": {
+      "title": "Load SF3D Model"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": "{INPUT_IMAGE}"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "sf3d_model": [
+        "1",
+        0
+      ],
+      "foreground_image": [
+        "2",
+        0
+      ],
+      "remesh_option": "{REMESH_OPTION}",
+      "texture_resolution": "{TEXTURE_RESOLUTION}",
+      "foreground_ratio": "{FOREGROUND_RATIO}",
+      "batch_size": 1,
+      "scale": 1.0
+    },
+    "class_type": "StableFast3D",
+    "_meta": {
+      "title": "StableFast3D"
+    }
+  },
+  "4": {
+    "inputs": {
+      "mesh": [
+        "3",
+        0
+      ],
+      "axis_x_to": "x",
+      "axis_y_to": "y",
+      "axis_z_to": "z"
+    },
+    "class_type": "SwitchMeshAxis",
+    "_meta": {
+      "title": "Switch Mesh Axis"
+    }
+  },
+  "5": {
+    "inputs": {
+      "filename_prefix": "{OUTPUT_PREFIX}",
+      "mesh": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "Save3DMesh",
+    "_meta": {
+      "title": "Save 3D Mesh"
+    }
+  }
+}

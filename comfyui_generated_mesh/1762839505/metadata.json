@@ -1,0 +1,11 @@
+{
+  "timestamp": 1762839505,
+  "transcription": "on a red t-shirt, red t-shirt, red normal t-shirt.",
+  "settings_2d": {
+    "seed": 100,
+    "steps": 35,
+    "cfg": 9.5
+  },
+  "has_3d_mesh": false,
+  "3d_generation_method": "rodin_api_direct"
+}

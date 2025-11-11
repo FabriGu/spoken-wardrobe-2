@@ -1,0 +1,101 @@
+{
+  "1": {
+    "inputs": {
+      "image": "{INPUT_IMAGE}"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "20": {
+    "inputs": {
+      "mask": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "InvertMask",
+    "_meta": {
+      "title": "Invert Mask"
+    }
+  },
+  "36": {
+    "inputs": {
+      "model_name": "model.safetensors"
+    },
+    "class_type": "[Comfy3D] Load SF3D Model",
+    "_meta": {
+      "title": "[Comfy3D] Load SF3D Model"
+    }
+  },
+  "40": {
+    "inputs": {
+      "images": [
+        "1",
+        0
+      ],
+      "masks": [
+        "20",
+        0
+      ],
+      "foreground_ratio": "{FOREGROUND_RATIO}"
+    },
+    "class_type": "[Comfy3D] Resize Image Foreground",
+    "_meta": {
+      "title": "[Comfy3D] Resize Image Foreground"
+    }
+  },
+  "37": {
+    "inputs": {
+      "sf3d_model": [
+        "36",
+        0
+      ],
+      "reference_image": [
+        "40",
+        0
+      ],
+      "reference_mask": [
+        "40",
+        1
+      ],
+      "texture_resolution": "{TEXTURE_RESOLUTION}",
+      "remesh_option": "{REMESH_OPTION}"
+    },
+    "class_type": "[Comfy3D] StableFast3D",
+    "_meta": {
+      "title": "[Comfy3D] StableFast3D"
+    }
+  },
+  "43": {
+    "inputs": {
+      "mesh": [
+        "37",
+        0
+      ],
+      "axis_x_to": "-x",
+      "axis_y_to": "+y",
+      "axis_z_to": "-z",
+      "invert_faces": false,
+      "scale": 1.0
+    },
+    "class_type": "[Comfy3D] Switch Mesh Axis",
+    "_meta": {
+      "title": "[Comfy3D] Switch Mesh Axis"
+    }
+  },
+  "39": {
+    "inputs": {
+      "mesh": [
+        "43",
+        0
+      ],
+      "filename": "{OUTPUT_FILENAME}"
+    },
+    "class_type": "[Comfy3D] Save 3D Mesh",
+    "_meta": {
+      "title": "[Comfy3D] Save 3D Mesh"
+    }
+  }
+}

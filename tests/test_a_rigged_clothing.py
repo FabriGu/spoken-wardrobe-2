@@ -113,7 +113,9 @@ class RiggedClothingTest:
         print("✓ Human mesh LBS initialized")
 
         # Load clothing mesh (no rigging yet)
-        clothing_path = "pregenerated_mesh_clothing/base.glb"
+        # clothing_path = "pregenerated_mesh_clothing/base.glb"
+        # clothing_path = "generated_meshes/triposr_glb/0/mesh.glb"
+        clothing_path = "generated_meshes/sf3d_test_1/mesh.glb"
         print(f"Loading clothing mesh: {clothing_path}")
         self.clothing_mesh = RiggedMeshLoader.load(clothing_path)
         print(f"✓ Clothing: {len(self.clothing_mesh.vertices)} verts")
@@ -170,6 +172,17 @@ class RiggedClothingTest:
             ])
             self.clothing_mesh.vertices = self.clothing_mesh.vertices @ rot_x.T
             self.clothing_mesh.vertices[:, 1] *= -1
+
+        # GLB files from TripoSR face wrong direction (X-axis instead of -Z-axis)
+        # Apply -90° Y-axis rotation to face forward
+        # print("  Applying GLB orientation fix: 90° Y-axis rotation")
+        # theta_y = np.pi / 2  # -90 degrees
+        # rot_y = np.array([
+        #     [np.cos(theta_y), 0, np.sin(theta_y)],
+        #     [0, 1, 0],
+        #     [-np.sin(theta_y), 0, np.cos(theta_y)]
+        # ])
+        # self.clothing_mesh.vertices = self.clothing_mesh.vertices @ rot_y.T
 
         print("  ✓ Applied orientation corrections")
 

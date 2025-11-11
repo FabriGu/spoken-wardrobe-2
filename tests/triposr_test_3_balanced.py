@@ -25,7 +25,8 @@ TEXTURE_RESOLUTION = 2048
 
 # Get project root
 project_root = Path(__file__).parent.parent
-triposr_script = project_root / "external" / "TripoSR" / "run.py"
+# Use Mac-fixed version of TripoSR runner (fixes CUDA device detection on Mac)
+triposr_script = project_root / "tests" / "triposr_run_mac_fixed.py"
 input_path = project_root / INPUT_IMAGE
 output_path = project_root / OUTPUT_DIR
 
@@ -59,17 +60,19 @@ print("Trade-off: Moderate speed, moderate detail")
 print("=" * 70)
 
 # Build command
+# Use venv python explicitly (not conda python)
+venv_python = project_root / "venv" / "bin" / "python"
 cmd = [
-    sys.executable,
+    str(venv_python),
     str(triposr_script),
     str(input_path),
-    "--output-dir", str(output_path),
+    "--output-dir", 'generated_meshes/triposr_glb',
     # "--no-remove-bg",
     "--foreground-ratio", str(FOREGROUND_RATIO),
     "--mc-resolution", str(MC_RESOLUTION),
     # "--bake-texture",
     "--texture-resolution", str(TEXTURE_RESOLUTION),
-    "--model-save-format", "obj"
+    "--model-save-format", "glb"
 ]
 
 print("\nRunning TripoSR...")

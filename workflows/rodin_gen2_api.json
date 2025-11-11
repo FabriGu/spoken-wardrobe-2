@@ -1,0 +1,24 @@
+{
+  "1": {
+    "inputs": {
+      "image": "{{INPUT_IMAGE}}"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": ["1", 0],
+      "tier": "regular",
+      "art_style": "realistic",
+      "face_limit": 1,
+      "remove_bg": true
+    },
+    "class_type": "Rodin3D Gen-2 generate",
+    "_meta": {
+      "title": "Rodin Gen-2 Generate"
+    }
+  }
+}
